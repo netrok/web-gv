@@ -1,0 +1,24 @@
+/* Baseline limpio para trabajar con MUI */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+:root { color-scheme: light; } /* Deja que MUI controle colores/tema */
+
+body {
+  font-family: Inter, Roboto, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  background: transparent; /* que el tema MUI pinte el fondo */
+}
+
+/* Enlaces sin estilos agresivos (MUI se encarga) */
+a { text-decoration: none; color: inherit; }
+
+/* Medios responsivos por defecto */
+img, svg, video, canvas { display: block; max-width: 100%; }
