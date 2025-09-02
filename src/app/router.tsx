@@ -7,15 +7,17 @@ import type { Role } from '@/types/auth'
 // 👇 lazy + Suspense y tipos desde react
 import { lazy, Suspense, type ReactElement } from 'react'
 
+// Páginas (lazy)
 const LoginPage = lazy(() => import('@/features/auth/LoginPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const EmpleadosPage = lazy(() => import('@/features/empleados/EmpleadosPage'))
+const EmpleadoDetailPage = lazy(() => import('@/features/empleados/EmpleadoDetailPage'))
 
 const ADMIN_ROLES: Role[] = ['SuperAdmin', 'Admin', 'RRHH']
 
 const Fallback = <div style={{ padding: 24 }}>Cargando…</div>
 
-// ⬅️ Cambia JSX.Element → ReactElement
+// Suspense wrapper (tipado ReactElement)
 function wrap(el: ReactElement) {
   return <Suspense fallback={Fallback}>{el}</Suspense>
 }
@@ -31,18 +33,22 @@ export const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: wrap(<DashboardPage />) },
+
       {
         element: <ProtectedRoute />,
         children: [
           { path: 'empleados', element: wrap(<EmpleadosPage />) },
+          { path: 'empleados/:id', element: wrap(<EmpleadoDetailPage />) },
+
           {
             element: <RequireRole roles={ADMIN_ROLES} />,
             children: [
-              // rutas admin
+              // rutas solo admin aquí (catálogos, seguridad, etc.)
             ],
           },
         ],
       },
+
       { path: '*', element: <NotFound /> },
     ],
   },

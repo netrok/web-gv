@@ -23,7 +23,10 @@ import SearchIcon from '@mui/icons-material/Search'
 import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 import TableViewIcon from '@mui/icons-material/TableView'
+import VisibilityIcon from '@mui/icons-material/Visibility'
+import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
+
 import { fetchEmpleados } from './api'
 import type { Empleado } from './types'
 import api from '@/api/client'
@@ -80,6 +83,8 @@ function toCSV(rows: Empleado[]): string {
 }
 
 export default function EmpleadosPage() {
+  const navigate = useNavigate()
+
   // Paginación
   const [paginationModel, setPaginationModel] = React.useState<GridPaginationModel>({ page: 0, pageSize: 10 })
 
@@ -165,10 +170,30 @@ export default function EmpleadosPage() {
           return <Chip label={v ? 'Activo' : 'Inactivo'} color={v ? 'success' : 'default'} size="small" />
         },
       },
+      // ✅ Columna de acciones (adentro del useMemo)
+      {
+        field: 'acciones',
+        headerName: 'Acciones',
+        width: 130,
+        sortable: false,
+        filterable: false,
+        disableColumnMenu: true,
+        align: 'center',
+        headerAlign: 'center',
+        renderCell: (params: any) => (
+          <Button
+            size="small"
+            startIcon={<VisibilityIcon />}
+            component={RouterLink}
+            to={`/empleados/${params.row.id}`}
+          >
+            Ver
+          </Button>
+        ),
+      },
     ],
     []
   )
-
 
   // ---- Export helpers ----
   const [exporting, setExporting] = React.useState(false)
@@ -212,7 +237,7 @@ export default function EmpleadosPage() {
     let url: string = EMPLEADOS_PATH
     let params: any = { ...commonQueryParams, page: 1, page_size: pageSize }
     const all: Empleado[] = []
-    for (; ;) {
+    for (;;) {
       const { data } = await api.get(url, { params })
       if (Array.isArray(data)) {
         all.push(...(data as Empleado[]))
@@ -421,8 +446,9 @@ export default function EmpleadosPage() {
           onSortModelChange={setSortModel}
           density="standard"
           disableColumnMenu
-          // 👉 headers en negrita para las columnas con headerClassName="dg-bold"
+          onRowDoubleClick={(p) => navigate(`/empleados/${p.row.id}`)}
           sx={{
+            // 👉 headers en negrita para las columnas con headerClassName="dg-bold"
             '& .dg-bold .MuiDataGrid-columnHeaderTitle': { fontWeight: 700 },
           }}
         />
