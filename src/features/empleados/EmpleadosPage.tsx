@@ -24,6 +24,7 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 import TableViewIcon from '@mui/icons-material/TableView'
 import VisibilityIcon from '@mui/icons-material/Visibility'
+import AddIcon from '@mui/icons-material/Add'          // ⬅️ NUEVO
 import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 
@@ -150,7 +151,7 @@ export default function EmpleadosPage() {
   const rows = data?.items ?? []
   const rowCount = data?.total ?? 0
 
-  // Columnas: headers en negrita (solo las solicitadas) y sin Puesto/Email
+  // Columnas
   const columns = React.useMemo<GridColDef<Empleado>[]>(
     () => [
       { field: 'num_empleado', headerName: 'Núm.', width: 110, sortable: true, headerClassName: 'dg-bold' },
@@ -170,7 +171,6 @@ export default function EmpleadosPage() {
           return <Chip label={v ? 'Activo' : 'Inactivo'} color={v ? 'success' : 'default'} size="small" />
         },
       },
-      // ✅ Columna de acciones (adentro del useMemo)
       {
         field: 'acciones',
         headerName: 'Acciones',
@@ -208,7 +208,6 @@ export default function EmpleadosPage() {
     } as Record<string, unknown>
   }, [debouncedSearch, departamentoId, puestoId, estatus, ordering])
 
-  // Excel (servidor)
   const handleExportExcelServer = async () => {
     setExporting(true)
     try {
@@ -231,7 +230,6 @@ export default function EmpleadosPage() {
     }
   }
 
-  // Traer todo para CSV/PDF
   const fetchAllEmpleados = async (): Promise<Empleado[]> => {
     const pageSize = 200
     let url: string = EMPLEADOS_PATH
@@ -254,7 +252,6 @@ export default function EmpleadosPage() {
     return all
   }
 
-  // CSV (sin puesto/email)
   const handleExportCSV = async () => {
     setExporting(true)
     try {
@@ -274,7 +271,6 @@ export default function EmpleadosPage() {
     }
   }
 
-  // PDF (sin puesto/email)
   const handleExportPDF = async () => {
     setExporting(true)
     try {
@@ -319,7 +315,7 @@ export default function EmpleadosPage() {
 
   return (
     <Paper sx={{ p: 2, mx: 'auto', maxWidth: 1800, width: '100%' }}>
-      {/* HEADER / TOOLBAR (wrap responsivo) */}
+      {/* HEADER / TOOLBAR */}
       <Stack direction="row" alignItems="center" flexWrap="wrap" columnGap={1.5} rowGap={1} mb={2}>
         <Typography variant="h6" sx={{ mr: 1.5, flexShrink: 0 }}>
           Empleados
@@ -394,9 +390,20 @@ export default function EmpleadosPage() {
             <MenuItem value="false">Inactivos</MenuItem>
           </TextField>
 
-          {/* Botones sm+ */}
+          {/* Acciones (sm+) */}
           <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 1, ml: 'auto', flexShrink: 0 }}>
-            <Button variant="contained" size="small" startIcon={<FileDownloadIcon />} onClick={handleExportExcelServer} disabled={exporting}>
+            {/* ⬇️ NUEVO EMPLEADO */}
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              size="small"
+              component={RouterLink}
+              to="/empleados/nuevo"
+            >
+              Nuevo
+            </Button>
+
+            <Button variant="outlined" size="small" startIcon={<FileDownloadIcon />} onClick={handleExportExcelServer} disabled={exporting}>
               Excel
             </Button>
             <Button variant="outlined" size="small" startIcon={<TableViewIcon />} onClick={handleExportCSV} disabled={exporting}>
@@ -407,8 +414,19 @@ export default function EmpleadosPage() {
             </Button>
           </Box>
 
-          {/* Botones xs */}
+          {/* Acciones (xs) */}
           <Box sx={{ display: { xs: 'flex', sm: 'none' }, gap: 0.5, ml: 'auto', flexShrink: 0 }}>
+            {/* ⬇️ NUEVO EMPLEADO (icon) */}
+            <IconButton
+              color="primary"
+              component={RouterLink}
+              to="/empleados/nuevo"
+              size="small"
+              aria-label="Nuevo empleado"
+            >
+              <AddIcon fontSize="small" />
+            </IconButton>
+
             <IconButton color="primary" onClick={handleExportExcelServer} disabled={exporting} size="small" aria-label="Exportar a Excel">
               <FileDownloadIcon fontSize="small" />
             </IconButton>
@@ -448,7 +466,6 @@ export default function EmpleadosPage() {
           disableColumnMenu
           onRowDoubleClick={(p) => navigate(`/empleados/${p.row.id}`)}
           sx={{
-            // 👉 headers en negrita para las columnas con headerClassName="dg-bold"
             '& .dg-bold .MuiDataGrid-columnHeaderTitle': { fontWeight: 700 },
           }}
         />

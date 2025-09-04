@@ -1,6 +1,9 @@
+// src/features/empleados/EmpleadoEditPage.tsx
 import * as React from 'react'
-import { useNavigate, Link as RouterLink } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useParams, Link as RouterLink, useNavigate } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { AxiosError } from 'axios'
+
 import {
   Alert,
   Avatar,
@@ -11,7 +14,6 @@ import {
   FormControlLabel,
   LinearProgress,
   Paper,
-  Snackbar,
   Stack,
   Step,
   StepLabel,
@@ -25,27 +27,38 @@ import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore'
 import NavigateNextIcon from '@mui/icons-material/NavigateNext'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 
-// ❌ removido: import type { Empleado } from './types'
-import { createEmpleado, type EmpleadoCreate } from './api'
+import type { Empleado } from './types'
+import { fetchEmpleadoById, updateEmpleado } from './api'
+import type { EmpleadoCreate } from './api'
 
 const steps = ['Identificación', 'Laboral', 'Contacto y dirección', 'Bancarios & Confirmación']
 
-export default function EmpleadoCreatePage() {
+export default function EmpleadoEditPage() {
+  const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
 
+  const { data, isLoading, isError, error } = useQuery<Empleado, AxiosError>({
+    queryKey: ['empleado', id],
+    queryFn: () => fetchEmpleadoById(id!),
+    enabled: !!id,
+  })
+
   const [activeStep, setActiveStep] = React.useState(0)
   const lastStep = steps.length - 1
-  const [successOpen, setSuccessOpen] = React.useState(false)
-  const [fotoPreview, setFotoPreview] = React.useState<string | null>(null)
 
-  const { mutateAsync, isPending, isError: isCreateError, error: createError } = useMutation({
-    mutationFn: (payload: EmpleadoCreate) => createEmpleado(payload),
-    onSuccess: (nuevo) => {
+  const [fotoPreview, setFotoPreview] = React.useState<string | null>(null)
+  React.useEffect(() => {
+    if (!data) return
+    setFotoPreview((data as any).foto || null)
+  }, [data])
+
+  const { mutateAsync, isPending, isError: isSaveError, error: saveError } = useMutation({
+    mutationFn: (payload: Partial<EmpleadoCreate>) => updateEmpleado(id!, payload),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['empleados'] }).catch(() => {})
-      setSuccessOpen(true)
-      const id = (nuevo as any)?.id ?? (nuevo as any)?.num_empleado
-      navigate(id ? `/empleados/${id}` : '/empleados', { replace: true })
+      qc.invalidateQueries({ queryKey: ['empleado', id] }).catch(() => {})
+      navigate('/empleados', { replace: true, state: { flash: 'Empleado actualizado' } })
     },
   })
 
@@ -72,16 +85,11 @@ export default function EmpleadoCreatePage() {
     const s = (v ?? '').toString().trim()
     return s ? s : undefined
   }
-  // 🔒 Requeridos como string (no undefined)
-  function toReq(v: FormDataEntryValue | null): string {
-    return (v ?? '').toString().trim()
-  }
 
-  // Bloquear Enter salvo en el último paso
-  const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
-    if (e.key === 'Enter' && activeStep !== lastStep) {
-      e.preventDefault()
-    }
+  function formatDateForInput(iso?: string) {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10)
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -90,24 +98,17 @@ export default function EmpleadoCreatePage() {
     if (!validateCurrentStep()) return
 
     const fd = new FormData(e.currentTarget)
+    const fotoFile = (fd.get('foto') as File) ?? null
+    const includeFoto = !!(fotoFile && fotoFile.size > 0)
 
-    // Foto segura
-    const fotoEntry = fd.get('foto')
-    const fotoFile = fotoEntry instanceof File ? fotoEntry : null
-
-    const fechaNac = toReq(fd.get('fecha_nacimiento')) // '' si vacío
-    const payload: EmpleadoCreate = {
+    const payload: Partial<EmpleadoCreate> = {
       // Identificación / personales
-      num_empleado: toReq(fd.get('num_empleado')),
+      num_empleado: toOpt(fd.get('num_empleado')),
       activo: fd.get('activo') === 'on',
-      nombres: toReq(fd.get('nombres')),
-
-      // 🔒 requeridos en tu tipo EmpleadoCreate
-      apellido_paterno: toReq(fd.get('apellido_paterno')),
-      fecha_nacimiento: fechaNac, // string | Date – aquí string ('' si vacío)
-
-      // opcionales
+      nombres: toOpt(fd.get('nombres')),
+      apellido_paterno: toOpt(fd.get('apellido_paterno')),
       apellido_materno: toOpt(fd.get('apellido_materno')),
+      fecha_nacimiento: toOpt(fd.get('fecha_nacimiento')),
       curp: toOpt(fd.get('curp')),
       rfc: toOpt(fd.get('rfc')),
       nss: toOpt(fd.get('nss')),
@@ -148,32 +149,34 @@ export default function EmpleadoCreatePage() {
 
       // Otros
       notas: toOpt(fd.get('notas')),
+    }
 
-      // Archivo
-      foto: fotoFile,
-    } as EmpleadoCreate
-
-    // Requeridos mínimos en UI
-    if (!payload.num_empleado || !payload.nombres) {
-      formRef.current?.reportValidity()
-      return
+    if (includeFoto) {
+      payload.foto = fotoFile
     }
 
     await mutateAsync(payload)
   }
 
-  // Avance seguro (evita submits fantasma)
+  // Bloquear Enter en pasos que no sean el último
+  const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    if (e.key === 'Enter' && activeStep !== lastStep) {
+      e.preventDefault()
+    }
+  }
+
+  // Avanzar con protección anti “ghost click”
   const handleNext = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
     e.stopPropagation()
     if (!validateCurrentStep()) return
     setTimeout(() => {
-      setActiveStep((s) => Math.min(s + 1, lastStep))
+      setActiveStep(s => Math.min(s + 1, lastStep))
     }, 0)
   }
-  const handleBack = () => setActiveStep((s) => Math.max(s - 1, 0))
 
-  // Previsualización de foto
+  const handleBack = () => setActiveStep(s => Math.max(s - 1, 0))
+
   function handleFotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) {
@@ -182,6 +185,26 @@ export default function EmpleadoCreatePage() {
     }
     const url = URL.createObjectURL(file)
     setFotoPreview(url)
+  }
+
+  if (isLoading) {
+    return (
+      <Paper sx={{ p: 2, mx: 'auto', maxWidth: 1000 }}>
+        <Typography variant="h6">Cargando empleado…</Typography>
+      </Paper>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <Paper sx={{ p: 2, mx: 'auto', maxWidth: 1000 }}>
+        <Alert severity="error">
+          {`No se pudo cargar el empleado${
+            (error as any)?.response?.status ? ` (HTTP ${(error as any).response.status})` : ''
+          }.`}
+        </Alert>
+      </Paper>
+    )
   }
 
   return (
@@ -193,12 +216,12 @@ export default function EmpleadoCreatePage() {
             type="button"
             startIcon={<ArrowBackIcon />}
             component={RouterLink}
-            to="/empleados"
+            to={`/empleados/${id}`}
             size="small"
           >
             Volver
           </Button>
-          <Typography variant="h6" component="h1">Nuevo empleado</Typography>
+          <Typography variant="h6" component="h1">Editar empleado</Typography>
         </Stack>
 
         <Stack direction="row" spacing={1}>
@@ -242,56 +265,55 @@ export default function EmpleadoCreatePage() {
       {/* Stepper + progreso */}
       <Box sx={{ mb: 2 }}>
         <Stepper activeStep={activeStep} alternativeLabel>
-          {steps.map((label) => (
+          {steps.map(label => (
             <Step key={label}><StepLabel>{label}</StepLabel></Step>
           ))}
         </Stepper>
         <LinearProgress variant="determinate" value={progress} sx={{ mt: 1 }} />
       </Box>
 
-      {isCreateError && (
+      {isSaveError && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          {`No se pudo crear el empleado${
-            (createError as any)?.response?.status ? ` (HTTP ${(createError as any).response.status})` : ''
+          {`No se pudo guardar${
+            (saveError as any)?.response?.status ? ` (HTTP ${(saveError as any).response.status})` : ''
           }.`}
         </Alert>
       )}
 
       {/* FORM */}
       <Box
-        id="empleado-create-form"
+        id="empleado-edit-form"
         component="form"
         ref={formRef}
         onSubmit={handleSubmit}
         onKeyDown={handleFormKeyDown}
         autoComplete="off"
       >
-        {/* PASO 1: Identificación / Personales */}
+        {/* PASO 1: Identificación (incluye datos personales clave) */}
         <StepPanel active={activeStep === 0} index={0}>
           <Grid2>
-            <TextField name="num_empleado" label="Núm. empleado" required disabled={isPending} />
-            <FormControlLabel control={<Checkbox name="activo" defaultChecked disabled={isPending} />} label="Activo" />
+            <TextField name="num_empleado" label="Núm. empleado" required disabled={isPending} defaultValue={(data as any).num_empleado || ''} />
+            <FormControlLabel control={<Checkbox name="activo" defaultChecked={Boolean((data as any).activo)} disabled={isPending} />} label="Activo" />
 
-            <TextField name="nombres" label="Nombres" required disabled={isPending} />
-            <TextField name="apellido_paterno" label="Apellido paterno" disabled={isPending} />
-            <TextField name="apellido_materno" label="Apellido materno" disabled={isPending} />
+            <TextField name="nombres" label="Nombres" required disabled={isPending} defaultValue={data.nombres || ''} />
+            <TextField name="apellido_paterno" label="Apellido paterno" disabled={isPending} defaultValue={(data as any).apellido_paterno || ''} />
+            <TextField name="apellido_materno" label="Apellido materno" disabled={isPending} defaultValue={(data as any).apellido_materno || ''} />
 
-            <TextField name="fecha_nacimiento" label="Fecha nacimiento" type="date" InputLabelProps={{ shrink: true }} disabled={isPending} />
-            <TextField name="curp" label="CURP" disabled={isPending} />
-            <TextField name="rfc" label="RFC" disabled={isPending} />
-            <TextField name="nss" label="NSS" disabled={isPending} />
-            <TextField name="genero" label="Género" disabled={isPending} />
-            <TextField name="estado_civil" label="Estado civil" disabled={isPending} />
-            <TextField name="escolaridad" label="Escolaridad" disabled={isPending} />
+            <TextField name="fecha_nacimiento" label="Fecha nacimiento" type="date" InputLabelProps={{ shrink: true }} disabled={isPending} defaultValue={formatDateForInput((data as any).fecha_nacimiento)} />
+            <TextField name="curp" label="CURP" disabled={isPending} defaultValue={(data as any).curp || ''} />
+            <TextField name="rfc" label="RFC" disabled={isPending} defaultValue={(data as any).rfc || ''} />
+            <TextField name="nss" label="NSS" disabled={isPending} defaultValue={(data as any).nss || ''} />
+            <TextField name="genero" label="Género" disabled={isPending} defaultValue={(data as any).genero || ''} />
+            <TextField name="estado_civil" label="Estado civil" disabled={isPending} defaultValue={(data as any).estado_civil || ''} />
+            <TextField name="escolaridad" label="Escolaridad" disabled={isPending} defaultValue={(data as any).escolaridad || ''} />
           </Grid2>
 
           <Divider sx={{ my: 2 }} />
 
-          {/* Foto opcional */}
           <Stack direction="row" spacing={2} alignItems="center" useFlexGap flexWrap="wrap">
             <Avatar src={fotoPreview || undefined} sx={{ width: 72, height: 72 }} />
             <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} component="label">
-              Subir foto
+              Subir nueva foto
               <input name="foto" type="file" accept="image/*" hidden onChange={handleFotoChange} />
             </Button>
             {fotoPreview && (
@@ -305,28 +327,28 @@ export default function EmpleadoCreatePage() {
         {/* PASO 2: Laboral */}
         <StepPanel active={activeStep === 1} index={1}>
           <Grid2>
-            <TextField name="departamento_nombre" label="Departamento" disabled={isPending} />
-            <TextField name="puesto_nombre" label="Puesto" disabled={isPending} />
-            <TextField name="turno_nombre" label="Turno" disabled={isPending} />
-            <TextField name="horario_nombre" label="Horario" disabled={isPending} />
+            <TextField name="departamento_nombre" label="Departamento" disabled={isPending} defaultValue={(data as any).departamento_nombre || ''} />
+            <TextField name="puesto_nombre" label="Puesto" disabled={isPending} defaultValue={(data as any).puesto_nombre || ''} />
+            <TextField name="turno_nombre" label="Turno" disabled={isPending} defaultValue={(data as any).turno_nombre || ''} />
+            <TextField name="horario_nombre" label="Horario" disabled={isPending} defaultValue={(data as any).horario_nombre || ''} />
 
-            <TextField name="fecha_ingreso" label="Fecha ingreso" type="date" InputLabelProps={{ shrink: true }} disabled={isPending} />
-            <TextField name="sueldo" label="Sueldo" type="number" inputProps={{ step: '0.01' }} disabled={isPending} />
-            <TextField name="tipo_contrato" label="Tipo de contrato" disabled={isPending} />
-            <TextField name="tipo_jornada" label="Tipo de jornada" disabled={isPending} />
+            <TextField name="fecha_ingreso" label="Fecha ingreso" type="date" InputLabelProps={{ shrink: true }} disabled={isPending} defaultValue={formatDateForInput((data as any).fecha_ingreso)} />
+            <TextField name="sueldo" label="Sueldo" type="number" inputProps={{ step: '0.01' }} disabled={isPending} defaultValue={(data as any).sueldo ?? ''} />
+            <TextField name="tipo_contrato" label="Tipo de contrato" disabled={isPending} defaultValue={(data as any).tipo_contrato || ''} />
+            <TextField name="tipo_jornada" label="Tipo de jornada" disabled={isPending} defaultValue={(data as any).tipo_jornada || ''} />
           </Grid2>
         </StepPanel>
 
         {/* PASO 3: Contacto y dirección */}
         <StepPanel active={activeStep === 2} index={2}>
           <Grid2>
-            <TextField name="telefono" label="Teléfono" disabled={isPending} />
-            <TextField name="celular" label="Celular" disabled={isPending} />
-            <TextField name="email" label="Email" type="email" disabled={isPending} />
+            <TextField name="telefono" label="Teléfono" disabled={isPending} defaultValue={(data as any).telefono || ''} />
+            <TextField name="celular" label="Celular" disabled={isPending} defaultValue={(data as any).celular || ''} />
+            <TextField name="email" label="Email" type="email" disabled={isPending} defaultValue={data.email || ''} />
 
-            <TextField name="contacto_emergencia_nombre" label="Contacto emergencia - Nombre" disabled={isPending} />
-            <TextField name="contacto_emergencia_parentesco" label="Contacto emergencia - Parentesco" disabled={isPending} />
-            <TextField name="contacto_emergencia_telefono" label="Contacto emergencia - Teléfono" disabled={isPending} />
+            <TextField name="contacto_emergencia_nombre" label="Contacto emergencia - Nombre" disabled={isPending} defaultValue={(data as any).contacto_emergencia_nombre || ''} />
+            <TextField name="contacto_emergencia_parentesco" label="Contacto emergencia - Parentesco" disabled={isPending} defaultValue={(data as any).contacto_emergencia_parentesco || ''} />
+            <TextField name="contacto_emergencia_telefono" label="Contacto emergencia - Teléfono" disabled={isPending} defaultValue={(data as any).contacto_emergencia_telefono || ''} />
           </Grid2>
 
           <Divider sx={{ my: 1 }} />
@@ -334,12 +356,12 @@ export default function EmpleadoCreatePage() {
           <Stack spacing={1}>
             <Typography variant="subtitle2" color="text.secondary">Dirección</Typography>
             <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap">
-              <TextField name="calle" label="Calle" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
-              <TextField name="numero" label="Número" sx={{ width: 140 }} disabled={isPending} />
-              <TextField name="colonia" label="Colonia" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
-              <TextField name="municipio" label="Municipio" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
-              <TextField name="estado" label="Estado" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
-              <TextField name="cp" label="CP" sx={{ width: 140 }} disabled={isPending} />
+              <TextField name="calle" label="Calle" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).calle || ''} />
+              <TextField name="numero" label="Número" sx={{ width: 140 }} disabled={isPending} defaultValue={(data as any).numero || ''} />
+              <TextField name="colonia" label="Colonia" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).colonia || ''} />
+              <TextField name="municipio" label="Municipio" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).municipio || ''} />
+              <TextField name="estado" label="Estado" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).estado || ''} />
+              <TextField name="cp" label="CP" sx={{ width: 140 }} disabled={isPending} defaultValue={(data as any).cp || ''} />
             </Stack>
           </Stack>
 
@@ -350,15 +372,16 @@ export default function EmpleadoCreatePage() {
             minRows={3}
             sx={{ mt: 2, width: '100%' }}
             disabled={isPending}
+            defaultValue={(data as any).notas || ''}
           />
         </StepPanel>
 
         {/* PASO 4: Bancarios & Confirmación */}
         <StepPanel active={activeStep === 3} index={3}>
           <Grid2>
-            <TextField name="banco" label="Banco" disabled={isPending} />
-            <TextField name="cuenta" label="Cuenta" disabled={isPending} />
-            <TextField name="clabe" label="CLABE" disabled={isPending} />
+            <TextField name="banco" label="Banco" disabled={isPending} defaultValue={(data as any).banco || ''} />
+            <TextField name="cuenta" label="Cuenta" disabled={isPending} defaultValue={(data as any).cuenta || ''} />
+            <TextField name="clabe" label="CLABE" disabled={isPending} defaultValue={(data as any).clabe || ''} />
           </Grid2>
 
           <Box sx={{ mt: 2 }}>
@@ -369,14 +392,6 @@ export default function EmpleadoCreatePage() {
           </Box>
         </StepPanel>
       </Box>
-
-      {/* Snackbar éxito */}
-      <Snackbar
-        open={successOpen}
-        autoHideDuration={1800}
-        onClose={() => setSuccessOpen(false)}
-        message="Empleado creado"
-      />
     </Paper>
   )
 }

@@ -8,25 +8,36 @@ import {
   Avatar,
   Box,
   Button,
+  Card,
+  CardContent,
+  CardHeader,
   Chip,
-  CircularProgress,
-  GlobalStyles,
   IconButton,
   Paper,
+  Skeleton,
   Stack,
   Tooltip,
   Typography,
 } from '@mui/material'
+
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import EditIcon from '@mui/icons-material/Edit'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
-import PrintIcon from '@mui/icons-material/Print'
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
-import BeachAccessIcon from '@mui/icons-material/BeachAccess'
-import FactCheckIcon from '@mui/icons-material/FactCheck'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
-import QrCode2Icon from '@mui/icons-material/QrCode2'
+import BadgeIcon from '@mui/icons-material/Badge'
+import WorkIcon from '@mui/icons-material/Work'
+import BusinessCenterIcon from '@mui/icons-material/BusinessCenter'
+import ScheduleIcon from '@mui/icons-material/Schedule'
+import EventIcon from '@mui/icons-material/Event'
+import EmailIcon from '@mui/icons-material/Email'
+import PhoneIphoneIcon from '@mui/icons-material/PhoneIphone'
+import HomeWorkIcon from '@mui/icons-material/HomeWork'
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
+import CreditCardIcon from '@mui/icons-material/CreditCard'
+import WcIcon from '@mui/icons-material/Wc'
+import FavoriteIcon from '@mui/icons-material/Favorite'
 
+import { exportEmpleadoPDF } from './pdf'
 import type { Empleado } from './types'
 import { fetchEmpleadoById } from './api'
 
@@ -40,65 +51,14 @@ export default function EmpleadoDetailPage() {
     enabled: !!id,
   })
 
-  // Para PDF/Impresión
-  const printRef = React.useRef<HTMLDivElement>(null)
-
-  // QR (generado on-demand con import dinámico)
-  const [qrUrl, setQrUrl] = React.useState<string | null>(null)
-  React.useEffect(() => {
-    const genQr = async () => {
-      if (!data) return
-      try {
-        const QR = await import('qrcode')
-        const texto = JSON.stringify({
-          id: (data as any).id ?? id,
-          num: (data as any).num_empleado ?? '',
-          nombre: `${data.nombres} ${data.apellido_paterno} ${data.apellido_materno}`.trim(),
-          email: data.email ?? '',
-        })
-        const url = await QR.toDataURL(texto, { width: 160, margin: 2 })
-        setQrUrl(url)
-      } catch {
-        setQrUrl(null)
-      }
-    }
-    genQr()
-  }, [data, id])
+  const handleExportPDF = async () => {
+    if (!data) return
+    await exportEmpleadoPDF(data)
+  }
 
   const handleCopy = (value?: string) => {
     if (!value) return
     navigator.clipboard.writeText(value).catch(() => {})
-  }
-
-  const handlePrint = () => {
-    window.print()
-  }
-
-  const handleExportPDF = async () => {
-    if (!printRef.current) return
-    const [{ jsPDF }, html2canvasMod] = await Promise.all([
-      import('jspdf'),
-      import('html2canvas'),
-    ])
-    const html2canvas = html2canvasMod.default ?? (html2canvasMod as any)
-    const canvas = await html2canvas(printRef.current, { scale: 2, useCORS: true })
-    const imgData = canvas.toDataURL('image/png')
-
-    const pdf = new jsPDF({ orientation: 'p', unit: 'pt', format: 'a4' })
-    const pageWidth = pdf.internal.pageSize.getWidth()
-    const pageHeight = pdf.internal.pageSize.getHeight()
-
-    const imgWidth = pageWidth
-    const imgHeight = (canvas.height * imgWidth) / canvas.width
-
-    if (imgHeight > pageHeight) {
-      const scale = pageHeight / imgHeight
-      pdf.addImage(imgData, 'PNG', 0, 0, imgWidth * scale, pageHeight)
-    } else {
-      pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight)
-    }
-
-    pdf.save(`empleado_${(data as any)?.num_empleado ?? id}.pdf`)
   }
 
   return (
@@ -106,18 +66,11 @@ export default function EmpleadoDetailPage() {
       sx={{
         p: 2,
         mx: 'auto',
-        maxWidth: 1000,
-        '@media print': {
-          boxShadow: 'none',
-          m: 0,
-          borderRadius: 0,
-        },
+        maxWidth: 1200,
+        '@media print': { boxShadow: 'none', m: 0, borderRadius: 0 },
       }}
     >
-      {/* Reglas globales de impresión para ocultar elementos con .no-print */}
-      <GlobalStyles styles={{ '@media print': { '.no-print': { display: 'none !important' } } }} />
-
-      {/* Header (no se imprime) */}
+      {/* Header */}
       <Stack className="no-print" direction="row" alignItems="center" justifyContent="space-between" mb={2}>
         <Stack direction="row" spacing={1} alignItems="center">
           <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(-1)} size="small">
@@ -125,11 +78,7 @@ export default function EmpleadoDetailPage() {
           </Button>
           <Typography variant="h6" component="h1">Detalle del empleado</Typography>
         </Stack>
-
         <Stack direction="row" spacing={1}>
-          <Button variant="outlined" startIcon={<PrintIcon />} size="small" onClick={handlePrint}>
-            Imprimir
-          </Button>
           <Button variant="contained" startIcon={<PictureAsPdfIcon />} size="small" onClick={handleExportPDF}>
             PDF
           </Button>
@@ -138,180 +87,130 @@ export default function EmpleadoDetailPage() {
             startIcon={<EditIcon />}
             size="small"
             component={RouterLink}
-            to="edit"
-            disabled
-            title="Próximamente"
+            to={`/empleados/${id}/editar`}
           >
             Editar
           </Button>
         </Stack>
       </Stack>
 
-      {/* Contenido imprimible */}
-      <Box ref={printRef}>
-        {isLoading && (
-          <Box sx={{ display: 'grid', placeItems: 'center', height: 200 }}>
-            <CircularProgress />
-          </Box>
-        )}
+      {/* Contenido */}
+      <Box>
+        {isLoading && <LoadingSkeleton />}
 
         {isError && (
           <Alert severity="error">
-            {`No se pudo cargar el empleado${
-              error?.response?.status ? ` (HTTP ${error.response.status})` : ''
-            }.`}
+            {`No se pudo cargar el empleado${error?.response?.status ? ` (HTTP ${error.response.status})` : ''}.`}
           </Alert>
         )}
 
         {data && (
           <Box>
-            {/* Encabezado con avatar y estado */}
-            <Stack direction="row" spacing={2} alignItems="center" mb={2}>
-              <Avatar
-                sx={{ width: 64, height: 64, fontSize: 24 }}
-                src={(data as any).foto || undefined}
-              >
-                {`${data.nombres?.[0] ?? ''}${data.apellido_paterno?.[0] ?? ''}`.toUpperCase()}
-              </Avatar>
-              <Stack spacing={0.5}>
-                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                  <Typography variant="h5" sx={{ mr: 1 }}>
-                    {data.nombres} {data.apellido_paterno} {data.apellido_materno}
-                  </Typography>
-                  <Chip
-                    size="small"
-                    color={data.activo ? 'success' : 'default'}
-                    label={data.activo ? 'Activo' : 'Inactivo'}
-                  />
-                </Stack>
-                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                  {(data as any).departamento_nombre && (
-                    <Chip size="small" label={(data as any).departamento_nombre} />
-                  )}
-                  {(data as any).puesto_nombre && (
-                    <Chip size="small" label={(data as any).puesto_nombre} />
-                  )}
-                  {(data as any).turno_nombre && (
-                    <Chip size="small" label={(data as any).turno_nombre} />
-                  )}
-                </Stack>
-              </Stack>
-            </Stack>
+            {/* Summary header */}
+            <Card variant="outlined" sx={{ mb: 2 }}>
+              <CardContent>
+                <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+                  <Avatar
+                    sx={{ width: 72, height: 72, fontSize: 28 }}
+                    src={(data as any).foto || undefined}
+                  >
+                    {`${data.nombres?.[0] ?? ''}${data.apellido_paterno?.[0] ?? ''}`.toUpperCase()}
+                  </Avatar>
 
-            {/* Acciones rápidas (no se imprimen) */}
-            <Stack className="no-print" direction="row" spacing={1} mb={2} flexWrap="wrap">
-              <Button
-                startIcon={<CalendarMonthIcon />}
-                variant="outlined"
-                component={RouterLink}
-                to="asistencias"
-                size="small"
-              >
-                Asistencias
-              </Button>
-              <Button
-                startIcon={<BeachAccessIcon />}
-                variant="outlined"
-                component={RouterLink}
-                to="vacaciones"
-                size="small"
-              >
-                Vacaciones
-              </Button>
-              <Button
-                startIcon={<FactCheckIcon />}
-                variant="outlined"
-                component={RouterLink}
-                to="permisos"
-                size="small"
-              >
-                Permisos
-              </Button>
-            </Stack>
+                  <Box sx={{ minWidth: 260 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                      <Typography variant="h5" sx={{ mr: 1 }}>
+                        {data.nombres} {data.apellido_paterno} {data.apellido_materno}
+                      </Typography>
+                      <Chip
+                        size="small"
+                        color={data.activo ? 'success' : 'default'}
+                        label={data.activo ? 'Activo' : 'Inactivo'}
+                      />
+                    </Stack>
 
-            {/* Layout de detalles (CSS Grid) */}
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
-                gap: 2,
-              }}
-            >
-              <Field label="Núm. empleado" value={(data as any).num_empleado} />
-              <Field label="Departamento" value={(data as any).departamento_nombre} />
-              <Field label="Puesto" value={(data as any).puesto_nombre} />
-              <Field label="Turno" value={(data as any).turno_nombre} />
+                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" mt={0.5}>
+                      {(data as any).departamento_nombre && (
+                        <Chip size="small" icon={<BusinessCenterIcon />} label={(data as any).departamento_nombre} />
+                      )}
+                      {(data as any).puesto_nombre && (
+                        <Chip size="small" icon={<WorkIcon />} label={(data as any).puesto_nombre} />
+                      )}
+                      {(data as any).turno_nombre && (
+                        <Chip size="small" icon={<ScheduleIcon />} label={(data as any).turno_nombre} />
+                      )}
+                    </Stack>
+                  </Box>
 
-              <Stack spacing={0.5} direction="row" alignItems="center">
-                <Box flex={1}>
-                  <Field label="Email" value={data.email} />
-                </Box>
-                <Tooltip title="Copiar correo" className="no-print">
-                  <IconButton size="small" onClick={() => handleCopy(data.email ?? '')}>
-                    <ContentCopyIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-              <Field label="Celular" value={(data as any).celular} />
-
-              <Field label="Género" value={(data as any).genero_display ?? (data as any).genero} />
-              <Field
-                label="Estado civil"
-                value={(data as any).estado_civil_display ?? (data as any).estado_civil}
-              />
-
-              <Field label="Fecha ingreso" value={fmtDate((data as any).fecha_ingreso)} />
-              <Field label="Horario" value={(data as any).horario_nombre} />
-
-              {/* Dirección ocupa todo el ancho */}
-              <Box sx={{ gridColumn: '1 / -1' }}>
-                <Field
-                  label="Dirección"
-                  value={[
-                    (data as any).calle,
-                    (data as any).numero,
-                    (data as any).colonia,
-                    (data as any).municipio,
-                    (data as any).estado,
-                    (data as any).cp,
-                  ]
-                    .filter(Boolean)
-                    .join(', ')}
-                />
-              </Box>
-
-              <Field label="Banco" value={(data as any).banco} />
-              <Field label="Cuenta" value={mask((data as any).cuenta)} />
-            </Box>
-
-            {/* Bloque QR (derecha) */}
-            <Box
-              sx={{
-                mt: 3,
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', sm: '1fr auto' },
-                alignItems: 'center',
-                gap: 2,
-              }}
-            >
-              <Stack spacing={0.5}>
-                <Typography variant="caption" color="text.secondary">Identificación</Typography>
-                <Typography>
-                  {(data as any).num_empleado ? `Empleado #${(data as any).num_empleado}` : `ID: ${id}`}
-                </Typography>
-              </Stack>
-
-              <Stack alignItems="center" spacing={0.5}>
-                {qrUrl ? (
-                  <Box component="img" src={qrUrl} alt="QR empleado" sx={{ width: 128, height: 128 }} />
-                ) : (
-                  <Stack alignItems="center" spacing={0.5}>
-                    <QrCode2Icon fontSize="large" />
-                    <Typography variant="caption" color="text.secondary">
-                      (Instala <code>qrcode</code> para ver el QR)
-                    </Typography>
+                  {/* Acciones rápidas */}
+                  <Stack className="no-print" direction="row" spacing={1} sx={{ ml: 'auto' }} flexWrap="wrap">
+                    <Button size="small" variant="outlined" component={RouterLink} to="asistencias">Asistencias</Button>
+                    <Button size="small" variant="outlined" component={RouterLink} to="vacaciones">Vacaciones</Button>
+                    <Button size="small" variant="outlined" component={RouterLink} to="permisos">Permisos</Button>
                   </Stack>
-                )}
+                </Stack>
+              </CardContent>
+            </Card>
+
+            {/* 2 columnas: aside + contenido */}
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', md: '320px 1fr' },
+                gap: 2,
+              }}
+            >
+              {/* Aside */}
+              <Stack spacing={2}>
+                <Section title="Contacto">
+                  <InfoRow icon={<EmailIcon />} label="Email" value={data.email}>
+                    {data.email && (
+                      <Tooltip title="Copiar">
+                        <IconButton size="small" onClick={() => handleCopy(data.email!)}>
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </InfoRow>
+                  <InfoRow icon={<PhoneIphoneIcon />} label="Celular" value={(data as any).celular}>
+                    {(data as any).celular && (
+                      <Tooltip title="Copiar">
+                        <IconButton size="small" onClick={() => handleCopy((data as any).celular!)}>
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </InfoRow>
+                </Section>
+
+                <Section title="Identificación">
+                  <InfoRow icon={<BadgeIcon />} label="Núm. empleado" value={(data as any).num_empleado} />
+                  <InfoRow icon={<EventIcon />} label="Fecha ingreso" value={fmtDate((data as any).fecha_ingreso)} />
+                  <InfoRow icon={<ScheduleIcon />} label="Horario" value={(data as any).horario_nombre} />
+                </Section>
+              </Stack>
+
+              {/* Contenido principal */}
+              <Stack spacing={2}>
+                <Section title="Datos laborales">
+                  <InfoRow icon={<BusinessCenterIcon />} label="Departamento" value={(data as any).departamento_nombre} />
+                  <InfoRow icon={<WorkIcon />} label="Puesto" value={(data as any).puesto_nombre} />
+                  <InfoRow icon={<ScheduleIcon />} label="Turno" value={(data as any).turno_nombre} />
+                </Section>
+
+                <Section title="Datos personales">
+                  <InfoRow icon={<WcIcon />} label="Género" value={(data as any).genero_display ?? (data as any).genero} />
+                  <InfoRow icon={<FavoriteIcon />} label="Estado civil" value={(data as any).estado_civil_display ?? (data as any).estado_civil} />
+                </Section>
+
+                <Section title="Dirección">
+                  <InfoRow icon={<HomeWorkIcon />} label="Dirección" value={formatAddress(data)} />
+                </Section>
+
+                <Section title="Bancarios">
+                  <InfoRow icon={<AccountBalanceIcon />} label="Banco" value={(data as any).banco} />
+                  <InfoRow icon={<CreditCardIcon />} label="Cuenta" value={mask((data as any).cuenta)} />
+                </Section>
               </Stack>
             </Box>
           </Box>
@@ -321,14 +220,66 @@ export default function EmpleadoDetailPage() {
   )
 }
 
-function Field({ label, value }: { label: string; value?: React.ReactNode }) {
+/* ---------- UI helpers ---------- */
+
+function Section({ title, children }: React.PropsWithChildren<{ title: string }>) {
   return (
-    <Stack spacing={0.5}>
-      <Typography variant="caption" color="text.secondary">{label}</Typography>
-      <Typography>{value || '—'}</Typography>
+    <Card variant="outlined">
+      <CardHeader title={title} sx={{ pb: 0.5 }} />
+      <CardContent sx={{ pt: 1.5 }}>
+        <Stack spacing={1.25}>{children}</Stack>
+      </CardContent>
+    </Card>
+  )
+}
+
+function InfoRow({
+  icon,
+  label,
+  value,
+  children,
+}: React.PropsWithChildren<{ icon?: React.ReactNode; label: string; value?: React.ReactNode }>) {
+  return (
+    <Stack direction="row" alignItems="center" spacing={1.5}>
+      {icon && <Box sx={{ color: 'text.secondary', display: 'grid', placeItems: 'center' }}>{icon}</Box>}
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography variant="caption" color="text.secondary">{label}</Typography>
+        <Typography sx={{ wordBreak: 'break-word' }}>{value ?? '—'}</Typography>
+      </Box>
+      {children}
     </Stack>
   )
 }
+
+function LoadingSkeleton() {
+  return (
+    <Stack spacing={2}>
+      <Card variant="outlined">
+        <CardContent>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Skeleton variant="circular" width={72} height={72} />
+            <Box sx={{ flex: 1 }}>
+              <Skeleton variant="text" width={280} />
+              <Skeleton variant="text" width={200} />
+            </Box>
+          </Stack>
+        </CardContent>
+      </Card>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', md: '320px 1fr' },
+          gap: 2,
+        }}
+      >
+        <Card variant="outlined"><CardContent><Skeleton height={140} /></CardContent></Card>
+        <Card variant="outlined"><CardContent><Skeleton height={140} /></CardContent></Card>
+      </Box>
+    </Stack>
+  )
+}
+
+/* ---------- formatters ---------- */
 
 function mask(v?: string) {
   if (!v) return '—'
@@ -340,4 +291,16 @@ function fmtDate(iso?: string) {
   if (!iso) return '—'
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-MX')
+}
+
+function formatAddress(e: Partial<Empleado>) {
+  const parts = [
+    (e as any).calle,
+    (e as any).numero,
+    (e as any).colonia,
+    (e as any).municipio,
+    (e as any).estado,
+    (e as any).cp,
+  ].filter(Boolean)
+  return parts.length ? parts.join(', ') : '—'
 }

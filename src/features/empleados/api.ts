@@ -58,17 +58,36 @@ export async function fetchEmpleadoById(id: number | string): Promise<Empleado> 
 export const getEmpleado = fetchEmpleadoById
 
 /* ---------- Escrituras ---------- */
-// Shape para crear/editar (ajústalo a tu backend)
+/** Shape para crear/editar. Ajusta campos opcionales según tu backend */
 export type EmpleadoCreate = {
   num_empleado: string
   nombres: string
-  apellido_paterno?: string
-  apellido_materno?: string
-  email?: string
-  celular?: string
+  apellido_paterno: string
+  apellido_materno?: string | null
+
+  /** FIX: agregado para evitar TS2353 */
+  fecha_nacimiento: string | Date
+
   genero?: string
-  estado_civil?: string
-  fecha_ingreso?: string // 'YYYY-MM-DD'
+  estado_civil?: string | null
+  curp?: string | null
+  rfc?: string | null
+  nss?: string | null
+
+  /** Alineado a tu modelo */
+  telefono?: string | null
+  email?: string | null
+
+  /** Generalmente el backend espera IDs */
+  departamento_id?: number
+  puesto_id?: number
+
+  /** Acepta Date o string YYYY-MM-DD */
+  fecha_ingreso?: string | Date
+
+  activo?: boolean
+
+  /** Direcciones / bancos (opcionales) */
   calle?: string
   numero?: string
   colonia?: string
@@ -77,13 +96,15 @@ export type EmpleadoCreate = {
   cp?: string
   banco?: string
   cuenta?: string
+
+  /** Archivos */
+  foto?: File | null
+
+  /** Soporta tus campos *_nombre si tu UI los usa temporalmente */
   departamento_nombre?: string
   puesto_nombre?: string
   turno_nombre?: string
   horario_nombre?: string
-  activo?: boolean
-  // opcional futuro:
-  foto?: File | null
 }
 
 /* --- helpers JSON/FormData auto --- */
@@ -96,16 +117,31 @@ function hasFileLike(obj: unknown): boolean {
   return false
 }
 
+/** Convierte Date a 'YYYY-MM-DD' en shallow props */
+function normalizeForSubmit<T extends Record<string, any>>(payload: T): T {
+  const out: Record<string, any> = {}
+  for (const [k, v] of Object.entries(payload)) {
+    if (v instanceof Date) {
+      out[k] = v.toISOString().slice(0, 10)
+    } else {
+      out[k] = v
+    }
+  }
+  return out as T
+}
+
 function toFormData(payload: Record<string, any>): FormData {
   const fd = new FormData()
-  for (const [k, v] of Object.entries(payload)) {
+  for (const [k, raw] of Object.entries(payload)) {
+    const v = raw instanceof Date ? raw.toISOString().slice(0, 10) : raw
     if (v === undefined || v === null) continue
     if (v instanceof File || v instanceof Blob) {
       fd.append(k, v)
     } else if (Array.isArray(v)) {
       v.forEach(item => {
         if (item !== undefined && item !== null) {
-          fd.append(k, item instanceof Blob ? item : String(item))
+          const val = item instanceof Date ? item.toISOString().slice(0, 10) : item
+          fd.append(k, val instanceof Blob ? val : String(val))
         }
       })
     } else if (typeof v === 'boolean' || typeof v === 'number') {
@@ -125,8 +161,8 @@ export async function createEmpleado(
     input instanceof FormData
       ? input
       : hasFileLike(input)
-      ? toFormData(input as any)
-      : input
+      ? toFormData(normalizeForSubmit(input as any))
+      : normalizeForSubmit(input as any)
 
   const { data } = await api.post<Empleado>(EMPLEADOS_PATH, body, {
     headers: body instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
@@ -143,8 +179,8 @@ export async function updateEmpleado(
     input instanceof FormData
       ? input
       : hasFileLike(input)
-      ? toFormData(input as any)
-      : input
+      ? toFormData(normalizeForSubmit(input as any))
+      : normalizeForSubmit(input as any)
 
   const { data } = await api.put<Empleado>(`${EMPLEADOS_PATH}${id}/`, body, {
     headers: body instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
