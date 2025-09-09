@@ -3,6 +3,7 @@ import * as React from 'react'
 import { useParams, Link as RouterLink, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { AxiosError } from 'axios'
+import api from '@/api/client'
 
 import {
   Alert,
@@ -33,6 +34,20 @@ import type { Empleado, Genero, EstadoCivil, Escolaridad } from './types'
 import { GENEROS, ESTADOS_CIVILES, ESCOLARIDADES } from './types'
 import { fetchEmpleadoById, patchEmpleado } from './api'
 import type { EmpleadoCreate } from './api'
+
+// Validadores y normalizadores compartidos
+import {
+  RE_CURP,
+  RE_RFC,
+  RE_NSS,
+  RE_CLABE,
+  RE_CUENTA,
+  RE_PHONE10,
+  RE_CP_MX,
+  patternAttr,
+  toUpperOnBlur,
+  stripSpacesDashesOnBlur,
+} from './validators'
 
 const steps = ['Identificación', 'Laboral', 'Contacto y dirección', 'Bancarios & Confirmación']
 
@@ -67,7 +82,6 @@ const normalizeGenero = (s?: string | null): Genero | undefined => {
   const k = normKeyUpper(s) as Genero
   return GENERO_VALUES.includes(k) ? k : undefined
 }
-
 const normalizeCivil = (s?: string | null): EstadoCivil | undefined => {
   if (!s) return undefined
   const raw = String(s).trim()
@@ -75,7 +89,6 @@ const normalizeCivil = (s?: string | null): EstadoCivil | undefined => {
   const k = normKeyLower(raw) as EstadoCivil
   return CIVIL_VALUES.includes(k) ? k : undefined
 }
-
 const normalizeEscolaridad = (s?: string | null): Escolaridad | undefined => {
   if (!s) return undefined
   const k = normKeyUpper(s) as Escolaridad
@@ -104,7 +117,6 @@ function formatDateForInput(iso?: string) {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10)
 }
 
-// Para mostrar detalle de errores de DRF
 function flattenDRFErrors(err: unknown): string {
   const data = (err as any)?.response?.data
   if (!data) return ''
@@ -120,22 +132,13 @@ function flattenDRFErrors(err: unknown): string {
   return String(data)
 }
 
-/* ---------- Validaciones (regex y normalizadores UI) ---------- */
-const RE_CURP   = /^[A-Z]{4}\d{6}[HM][A-Z]{5}\d{2}$/         // 18, mayúsculas
-const RE_RFC    = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/           // 12-13
-const RE_NSS    = /^\d{11}$/                                 // 11 dígitos
-const RE_CLABE  = /^\d{18}$/                                 // 18 dígitos
-const RE_CUENTA = /^\d{10,20}$/                              // 10-20 dígitos
-const RE_PHONE  = /^\+?[0-9\s-]{7,20}$/                      // teléfono flexible
+/* ---------- Fetch catálogos (Deptos, Puestos, Turnos, Horarios) ---------- */
+type OpcionBasica = { id: number; nombre: string }
+type Paginated<T> = { results?: T[] }
 
-const patternAttr = (re: RegExp) => re.source
-
-const toUpperOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-  e.currentTarget.value = e.currentTarget.value.toUpperCase().trim()
-}
-
-const stripSpacesDashesOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-  e.currentTarget.value = e.currentTarget.value.replace(/[\s-]+/g, '')
+async function fetchOptions(path: string): Promise<OpcionBasica[]> {
+  const { data } = await api.get<Paginated<OpcionBasica> | OpcionBasica[]>(path, { params: { page_size: 1000 } })
+  return Array.isArray(data) ? data : (data.results ?? [])
 }
 
 /* ---------- Componente ---------- */
@@ -150,6 +153,25 @@ export default function EmpleadoEditPage() {
     enabled: !!id,
   })
 
+  // Catálogos
+  const { data: departamentos = [], isLoading: isDepsLoading } = useQuery({
+    queryKey: ['departamentos'],
+    queryFn: () => fetchOptions('/v1/departamentos/'),
+  })
+  const { data: puestos = [], isLoading: isPuestosLoading } = useQuery({
+    queryKey: ['puestos'],
+    queryFn: () => fetchOptions('/v1/puestos/'),
+  })
+  // ⬇️ NUEVO: Turnos y Horarios (solo esto se agregó)
+  const { data: turnos = [], isLoading: isTurnosLoading } = useQuery({
+    queryKey: ['turnos'],
+    queryFn: () => fetchOptions('/v1/turnos/'),
+  })
+  const { data: horarios = [], isLoading: isHorariosLoading } = useQuery({
+    queryKey: ['horarios'],
+    queryFn: () => fetchOptions('/v1/horarios/'),
+  })
+
   const [activeStep, setActiveStep] = React.useState(0)
   const lastStep = steps.length - 1
 
@@ -161,7 +183,7 @@ export default function EmpleadoEditPage() {
     setFotoPreview((data as any).foto_url || (data as any).foto || null)
   }, [data])
 
-  // Limpia blob URLs para evitar memory leaks
+  // Limpia blob URLs
   React.useEffect(() => {
     if (fotoPreview && fotoPreview.startsWith('blob:')) {
       if (prevBlobUrl.current && prevBlobUrl.current !== fotoPreview && prevBlobUrl.current.startsWith('blob:')) {
@@ -203,7 +225,7 @@ export default function EmpleadoEditPage() {
     const stepPanels = form.querySelectorAll<HTMLElement>('[data-step]')
     const current = stepPanels[activeStep]
     if (!current) return true
-    const inputs = Array.from(current.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input,textarea'))
+    const inputs = Array.from(current.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,textarea,select'))
     for (const el of inputs) {
       if (!el.checkValidity()) {
         form.reportValidity()
@@ -235,20 +257,21 @@ export default function EmpleadoEditPage() {
       rfc: toOpt(fd.get('rfc')),
       nss: toOpt(fd.get('nss')),
 
-      // Choices — se omiten si están vacíos
-      genero: choiceFromForm(fd, 'genero', normalizeGenero),            // 'M'|'F'|'O'
-      estado_civil: choiceFromForm(fd, 'estado_civil', normalizeCivil), // 'soltero'|...
+      // Choices
+      genero: choiceFromForm(fd, 'genero', normalizeGenero),
+      estado_civil: choiceFromForm(fd, 'estado_civil', normalizeCivil),
       escolaridad: choiceFromForm(fd, 'escolaridad', normalizeEscolaridad),
 
-      // Laboral
-      departamento_nombre: toOpt(fd.get('departamento_nombre')),
-      puesto_nombre: toOpt(fd.get('puesto_nombre')),
-      turno_nombre: toOpt(fd.get('turno_nombre')),
-      horario_nombre: toOpt(fd.get('horario_nombre')),
+      // Laboral (IDs reales)
+      departamento_id: (() => { const v = toOpt(fd.get('departamento_id')); return v ? Number(v) : undefined })(),
+      puesto_id:       (() => { const v = toOpt(fd.get('puesto_id'));       return v ? Number(v) : undefined })(),
+      // ⬇️ NUEVO: enviar turno_id y horario_id (en vez de *_nombre)
+      turno_id:        (() => { const v = toOpt(fd.get('turno_id'));        return v ? Number(v) : undefined })(),
+      horario_id:      (() => { const v = toOpt(fd.get('horario_id'));      return v ? Number(v) : undefined })(),
       fecha_ingreso: toOpt(fd.get('fecha_ingreso')),
       sueldo: toOpt(fd.get('sueldo')),
-      tipo_contrato: toOpt(fd.get('tipo_contrato')), // minúsculas desde el select
-      tipo_jornada: toOpt(fd.get('tipo_jornada')),   // minúsculas desde el select
+      tipo_contrato: toOpt(fd.get('tipo_contrato')),
+      tipo_jornada: toOpt(fd.get('tipo_jornada')),
 
       // Contacto
       telefono: toOpt(fd.get('telefono')),
@@ -332,9 +355,15 @@ export default function EmpleadoEditPage() {
   const civilDefault: EstadoCivil | '' = (() => {
     const raw = (data as any)?.estado_civil as string | undefined
     if (!raw) return ''
-    if (isCivilCode(raw)) return CIVIL_CODE_TO_VALUE[raw] // "S" -> "soltero"
-    return normKeyLower(raw) as EstadoCivil               // normaliza "Soltero", "UNION LIBRE", etc.
+    if (isCivilCode(raw)) return CIVIL_CODE_TO_VALUE[raw]
+    return normKeyLower(raw) as EstadoCivil
   })()
+
+  // ids actuales (si tu API los expone)
+  const depIdDefault = (data as any).departamento ?? ''
+  const puestoIdDefault = (data as any).puesto ?? ''
+  const turnoIdDefault = (data as any).turno ?? ''        // ⬅️ NUEVO
+  const horarioIdDefault = (data as any).horario ?? ''    // ⬅️ NUEVO
 
   return (
     <Paper sx={{ p: 2, mx: 'auto', maxWidth: 1000 }}>
@@ -430,21 +459,31 @@ export default function EmpleadoEditPage() {
         onKeyDown={handleFormKeyDown}
         autoComplete="off"
       >
-        {/* PASO 1: Identificación */}
+        {/* PASO 1: Identificación / Personales */}
         <StepPanel active={activeStep === 0} index={0}>
           <Grid2>
-            <TextField name="num_empleado" label="Núm. empleado" required disabled={isPending} defaultValue={(data as any).num_empleado || ''} />
-            <FormControlLabel control={<Checkbox name="activo" defaultChecked={Boolean((data as any).activo)} disabled={isPending} />} label="Activo" />
+            <TextField
+              name="num_empleado"
+              label="Núm. empleado"
+              required
+              disabled={isPending}
+              defaultValue={(data as any).num_empleado || ''}
+            />
+            <FormControlLabel
+              control={<Checkbox name="activo" defaultChecked={Boolean((data as any).activo)} disabled={isPending} />}
+              label="Activo"
+            />
 
             <TextField name="nombres" label="Nombres" required disabled={isPending} defaultValue={data.nombres || ''} />
-            <TextField name="apellido_paterno" label="Apellido paterno" disabled={isPending} defaultValue={(data as any).apellido_paterno || ''} />
-            <TextField name="apellido_materno" label="Apellido materno" disabled={isPending} defaultValue={(data as any).apellido_materno || ''} />
+            <TextField name="apellido_paterno" label="Apellido paterno" required disabled={isPending} defaultValue={(data as any).apellido_paterno || ''} />
+            <TextField name="apellido_materno" label="Apellido materno" required disabled={isPending} defaultValue={(data as any).apellido_materno || ''} />
 
             <TextField
               name="fecha_nacimiento"
               label="Fecha nacimiento"
               type="date"
               InputLabelProps={{ shrink: true }}
+              required
               disabled={isPending}
               defaultValue={formatDateForInput((data as any).fecha_nacimiento)}
             />
@@ -453,6 +492,7 @@ export default function EmpleadoEditPage() {
             <TextField
               name="curp"
               label="CURP"
+              required
               disabled={isPending}
               defaultValue={(data as any).curp || ''}
               inputProps={{ pattern: patternAttr(RE_CURP), maxLength: 18 }}
@@ -464,17 +504,19 @@ export default function EmpleadoEditPage() {
             <TextField
               name="rfc"
               label="RFC"
+              required
               disabled={isPending}
               defaultValue={(data as any).rfc || ''}
               inputProps={{ pattern: patternAttr(RE_RFC), maxLength: 13 }}
               onBlur={toUpperOnBlur}
-              helperText="12–13 caracteres (PF/PM)"
+              helperText="12–13 caracteres"
             />
 
             {/* NSS */}
             <TextField
               name="nss"
               label="NSS"
+              required
               disabled={isPending}
               defaultValue={(data as any).nss || ''}
               inputProps={{ pattern: patternAttr(RE_NSS), maxLength: 11, inputMode: 'numeric' }}
@@ -482,11 +524,12 @@ export default function EmpleadoEditPage() {
               helperText="11 dígitos"
             />
 
-            {/* Género (select) */}
+            {/* Género */}
             <TextField
               name="genero"
               label="Género"
               select
+              required
               disabled={isPending}
               defaultValue={normalizeGenero((data as any).genero) ?? ''}
             >
@@ -496,11 +539,12 @@ export default function EmpleadoEditPage() {
               ))}
             </TextField>
 
-            {/* Estado civil (select) */}
+            {/* Estado civil */}
             <TextField
               name="estado_civil"
               label="Estado civil"
               select
+              required
               disabled={isPending}
               defaultValue={civilDefault}
             >
@@ -510,11 +554,12 @@ export default function EmpleadoEditPage() {
               ))}
             </TextField>
 
-            {/* Escolaridad (select) */}
+            {/* Escolaridad */}
             <TextField
               name="escolaridad"
               label="Escolaridad"
               select
+              required
               disabled={isPending}
               defaultValue={normalizeEscolaridad((data as any).escolaridad) ?? ''}
             >
@@ -544,31 +589,95 @@ export default function EmpleadoEditPage() {
         {/* PASO 2: Laboral */}
         <StepPanel active={activeStep === 1} index={1}>
           <Grid2>
-            <TextField name="departamento_nombre" label="Departamento" disabled={isPending} defaultValue={(data as any).departamento_nombre || ''} />
-            <TextField name="puesto_nombre" label="Puesto" disabled={isPending} defaultValue={(data as any).puesto_nombre || ''} />
-            <TextField name="turno_nombre" label="Turno" disabled={isPending} defaultValue={(data as any).turno_nombre || ''} />
-            <TextField name="horario_nombre" label="Horario" disabled={isPending} defaultValue={(data as any).horario_nombre || ''} />
+            {/* Departamento (combo con ID) */}
+            <TextField
+              name="departamento_id"
+              label="Departamento"
+              select
+              required
+              disabled={isPending || isDepsLoading}
+              defaultValue={depIdDefault}
+            >
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {departamentos.map(opt => (
+                <MenuItem key={opt.id} value={opt.id}>{opt.nombre}</MenuItem>
+              ))}
+            </TextField>
+
+            {/* Puesto (combo con ID) */}
+            <TextField
+              name="puesto_id"
+              label="Puesto"
+              select
+              required
+              disabled={isPending || isPuestosLoading}
+              defaultValue={puestoIdDefault}
+            >
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {puestos.map(opt => (
+                <MenuItem key={opt.id} value={opt.id}>{opt.nombre}</MenuItem>
+              ))}
+            </TextField>
+
+            {/* ⬇️ NUEVO: Turno (combo con ID) */}
+            <TextField
+              name="turno_id"
+              label="Turno"
+              select
+              required
+              disabled={isPending || isTurnosLoading}
+              defaultValue={turnoIdDefault}
+            >
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {turnos.map(opt => (
+                <MenuItem key={opt.id} value={opt.id}>{opt.nombre}</MenuItem>
+              ))}
+            </TextField>
+
+            {/* ⬇️ NUEVO: Horario (combo con ID) */}
+            <TextField
+              name="horario_id"
+              label="Horario"
+              select
+              required
+              disabled={isPending || isHorariosLoading}
+              defaultValue={horarioIdDefault}
+            >
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {horarios.map(opt => (
+                <MenuItem key={opt.id} value={opt.id}>{opt.nombre}</MenuItem>
+              ))}
+            </TextField>
 
             <TextField
               name="fecha_ingreso"
               label="Fecha ingreso"
               type="date"
               InputLabelProps={{ shrink: true }}
+              required
               disabled={isPending}
               defaultValue={formatDateForInput((data as any).fecha_ingreso)}
             />
-
-            <TextField name="sueldo" label="Sueldo" type="number" inputProps={{ step: '0.01' }} disabled={isPending} defaultValue={(data as any).sueldo ?? ''} />
+            <TextField
+              name="sueldo"
+              label="Sueldo"
+              type="number"
+              required
+              inputProps={{ step: '0.01' }}
+              disabled={isPending}
+              defaultValue={(data as any).sueldo ?? ''}
+            />
 
             {/* Tipo de contrato */}
             <TextField
               name="tipo_contrato"
               label="Tipo de contrato"
               select
+              required
               disabled={isPending}
               defaultValue={(data as any).tipo_contrato ?? ''}
             >
-              <MenuItem value="">(Sin dato)</MenuItem>
+              <MenuItem value="">(Selecciona)</MenuItem>
               <MenuItem value="determinado">Determinado</MenuItem>
               <MenuItem value="indeterminado">Indeterminado</MenuItem>
               <MenuItem value="obra">Obra o proyecto</MenuItem>
@@ -579,10 +688,11 @@ export default function EmpleadoEditPage() {
               name="tipo_jornada"
               label="Tipo de jornada"
               select
+              required
               disabled={isPending}
               defaultValue={(data as any).tipo_jornada ?? ''}
             >
-              <MenuItem value="">(Sin dato)</MenuItem>
+              <MenuItem value="">(Selecciona)</MenuItem>
               <MenuItem value="diurna">Diurna</MenuItem>
               <MenuItem value="mixta">Mixta</MenuItem>
               <MenuItem value="nocturna">Nocturna</MenuItem>
@@ -596,24 +706,44 @@ export default function EmpleadoEditPage() {
             <TextField
               name="telefono"
               label="Teléfono"
+              required
               disabled={isPending}
               defaultValue={(data as any).telefono || ''}
-              inputProps={{ pattern: patternAttr(RE_PHONE), maxLength: 20, inputMode: 'tel' }}
-              helperText="7–20 caracteres; admite +, espacios y guiones"
+              inputProps={{ pattern: patternAttr(RE_PHONE10), maxLength: 10, inputMode: 'tel' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="10 dígitos"
             />
             <TextField
               name="celular"
               label="Celular"
+              required
               disabled={isPending}
               defaultValue={(data as any).celular || ''}
-              inputProps={{ pattern: patternAttr(RE_PHONE), maxLength: 20, inputMode: 'tel' }}
-              helperText="7–20 caracteres; admite +, espacios y guiones"
+              inputProps={{ pattern: patternAttr(RE_PHONE10), maxLength: 10, inputMode: 'tel' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="10 dígitos"
             />
-            <TextField name="email" label="Email" type="email" disabled={isPending} defaultValue={data.email || ''} />
+            <TextField
+              name="email"
+              label="Email"
+              type="email"
+              required
+              disabled={isPending}
+              defaultValue={data.email || ''}
+            />
 
-            <TextField name="contacto_emergencia_nombre" label="Contacto emergencia - Nombre" disabled={isPending} defaultValue={(data as any).contacto_emergencia_nombre || ''} />
-            <TextField name="contacto_emergencia_parentesco" label="Contacto emergencia - Parentesco" disabled={isPending} defaultValue={(data as any).contacto_emergencia_parentesco || ''} />
-            <TextField name="contacto_emergencia_telefono" label="Contacto emergencia - Teléfono" disabled={isPending} defaultValue={(data as any).contacto_emergencia_telefono || ''} />
+            <TextField name="contacto_emergencia_nombre" label="Contacto emergencia - Nombre" required disabled={isPending} defaultValue={(data as any).contacto_emergencia_nombre || ''} />
+            <TextField name="contacto_emergencia_parentesco" label="Contacto emergencia - Parentesco" required disabled={isPending} defaultValue={(data as any).contacto_emergencia_parentesco || ''} />
+            <TextField
+              name="contacto_emergencia_telefono"
+              label="Contacto emergencia - Teléfono"
+              required
+              disabled={isPending}
+              defaultValue={(data as any).contacto_emergencia_telefono || ''}
+              inputProps={{ pattern: patternAttr(RE_PHONE10), maxLength: 10, inputMode: 'tel' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="10 dígitos"
+            />
           </Grid2>
 
           <Divider sx={{ my: 1 }} />
@@ -621,12 +751,22 @@ export default function EmpleadoEditPage() {
           <Stack spacing={1}>
             <Typography variant="subtitle2" color="text.secondary">Dirección</Typography>
             <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap">
-              <TextField name="calle" label="Calle" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).calle || ''} />
-              <TextField name="numero" label="Número" sx={{ width: 140 }} disabled={isPending} defaultValue={(data as any).numero || ''} />
-              <TextField name="colonia" label="Colonia" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).colonia || ''} />
-              <TextField name="municipio" label="Municipio" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).municipio || ''} />
-              <TextField name="estado" label="Estado" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).estado || ''} />
-              <TextField name="cp" label="CP" sx={{ width: 140 }} disabled={isPending} defaultValue={(data as any).cp || ''} />
+              <TextField name="calle" label="Calle" required sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).calle || ''} />
+              <TextField name="numero" label="Número" required sx={{ width: 140 }} disabled={isPending} defaultValue={(data as any).numero || ''} />
+              <TextField name="colonia" label="Colonia" required sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).colonia || ''} />
+              <TextField name="municipio" label="Municipio" required sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).municipio || ''} />
+              <TextField name="estado" label="Estado" required sx={{ flex: 1, minWidth: 160 }} disabled={isPending} defaultValue={(data as any).estado || ''} />
+              <TextField
+                name="cp"
+                label="CP"
+                required
+                sx={{ width: 140 }}
+                disabled={isPending}
+                defaultValue={(data as any).cp || ''}
+                inputProps={{ pattern: patternAttr(RE_CP_MX), maxLength: 5, inputMode: 'numeric' }}
+                onBlur={stripSpacesDashesOnBlur}
+                helperText="5 dígitos"
+              />
             </Stack>
           </Stack>
 
@@ -648,6 +788,7 @@ export default function EmpleadoEditPage() {
             <TextField
               name="cuenta"
               label="Cuenta"
+              required
               disabled={isPending}
               defaultValue={(data as any).cuenta || ''}
               inputProps={{ pattern: patternAttr(RE_CUENTA), maxLength: 20, inputMode: 'numeric' }}
@@ -657,6 +798,7 @@ export default function EmpleadoEditPage() {
             <TextField
               name="clabe"
               label="CLABE"
+              required
               disabled={isPending}
               defaultValue={(data as any).clabe || ''}
               inputProps={{ pattern: patternAttr(RE_CLABE), maxLength: 18, inputMode: 'numeric' }}

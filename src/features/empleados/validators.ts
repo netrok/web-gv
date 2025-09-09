@@ -1,23 +1,31 @@
 // src/features/empleados/validators.ts
-export const RE_CURP   = /^[A-Z]{4}\d{6}[HM][A-Z]{5}\d{2}$/;   // 18, mayúsculas
-export const RE_RFC    = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/;     // 12-13
-export const RE_NSS    = /^\d{11}$/;                           // 11 dígitos
-export const RE_CLABE  = /^\d{18}$/;                           // 18 dígitos
-export const RE_CUENTA = /^\d{10,20}$/;                        // 10-20 dígitos
+import * as React from 'react'
 
-// Telefónos: el modelo no tiene validador → sugerimos algo flexible
-// + opcional, dígitos, espacios o guiones, 7 a 20 chars (coincide c/ max_length)
-export const RE_PHONE  = /^\+?[0-9\s-]{7,20}$/;
+/* ── Patrones (alineados al backend) ───────────────────────────────────────── */
+export const RE_CURP   = /^[A-Z]{4}\d{6}[HM][A-Z]{5}\d{2}$/          // 18, mayúsculas
+export const RE_RFC    = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/            // 12–13
+export const RE_NSS    = /^\d{11}$/                                  // 11 dígitos
+export const RE_CLABE  = /^\d{18}$/                                  // 18 dígitos
+export const RE_CUENTA = /^\d{10,20}$/                               // 10–20 dígitos
 
-// HTML pattern recibe string, así que usamos .source
-export const patternAttr = (re: RegExp) => re.source;
+// Teléfonos
+export const RE_PHONE10 = /^\d{10}$/                                 // exactamente 10 dígitos
+export const RE_PHONE   = /^[0-9+\s-]{7,20}$/                        // genérico (si lo necesitas)
 
-// Normalizadores útiles para inputs
+// Código Postal (México)
+export const RE_CP_MX = /^\d{5}$/                                    // 5 dígitos
+
+/* ── Helpers para usar en <TextField inputProps={{ pattern: ... }}> ───────── */
+export const patternAttr = (re: RegExp | string): string =>
+  typeof re === 'string' ? re : re.source
+
+/* ── Normalizadores onBlur ────────────────────────────────────────────────── */
 export const toUpperOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-  e.currentTarget.value = e.currentTarget.value.toUpperCase().trim();
-};
+  const v = (e.currentTarget.value ?? '').toString()
+  e.currentTarget.value = v.trim().toUpperCase()
+}
 
-// Para campos numéricos: quita espacios y guiones en blur
 export const stripSpacesDashesOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-  e.currentTarget.value = e.currentTarget.value.replace(/[\s-]+/g, '');
-};
+  const v = (e.currentTarget.value ?? '').toString()
+  e.currentTarget.value = v.replace(/[\s-]+/g, '')
+}
