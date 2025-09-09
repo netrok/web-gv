@@ -1,7 +1,7 @@
 // src/features/empleados/EmpleadoCreatePage.tsx
 import * as React from 'react'
 import { useNavigate, Link as RouterLink } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
   Avatar,
@@ -27,29 +27,47 @@ import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore'
 import NavigateNextIcon from '@mui/icons-material/NavigateNext'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 
+import api from '@/api/client'
 import { createEmpleado, type EmpleadoCreate } from './api'
-import { GENEROS, ESTADOS_CIVILES, type Genero, type EstadoCivil } from './types'
+import {
+  GENEROS,
+  ESTADOS_CIVILES,
+  ESCOLARIDADES,
+  type Genero,
+  type EstadoCivil,
+  type Escolaridad,
+} from './types'
 
 const steps = ['Identificación', 'Laboral', 'Contacto y dirección', 'Bancarios & Confirmación']
 
-// ---------- Helpers choices/normalización ----------
+/* ---------- Regex alineadas al backend y requisitos del front ---------- */
+const RE_CURP   = /^[A-Z]{4}\d{6}[HM][A-Z]{5}\d{2}$/
+const RE_RFC    = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/
+const RE_NSS    = /^\d{11}$/
+const RE_CLABE  = /^\d{18}$/
+const RE_CUENTA = /^\d{10,20}$/
+const RE_PHONE10 = /^\d{10}$/        // teléfonos estrictos de 10 dígitos (MX)
+const RE_CP     = /^\d{5}$/          // código postal 5 dígitos
+
+const patternAttr = (re: RegExp) => re.source
+const toUpperOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+  e.currentTarget.value = e.currentTarget.value.toUpperCase().trim()
+}
+const stripSpacesDashesOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+  e.currentTarget.value = e.currentTarget.value.replace(/[\s-]+/g, '')
+}
+
+/* ---------- Helpers choices/normalización ---------- */
 const normKey = (s?: string) =>
   (s ?? '')
     .normalize('NFD').replace(/\p{Diacritic}/gu, '')
     .trim().replace(/\s+/g, '_').toUpperCase()
 
 const GENERO_VALUES = GENEROS.map(o => o.value) as ReadonlyArray<Genero>
-const CIVIL_VALUES  = ESTADOS_CIVILES.map(o => o.value) as ReadonlyArray<EstadoCivil>
-
 const normalizeGenero = (s?: string | null): Genero | undefined => {
   if (!s) return undefined
   const k = normKey(s) as Genero
   return GENERO_VALUES.includes(k) ? k : undefined
-}
-const normalizeCivil = (s?: string | null): EstadoCivil | undefined => {
-  if (!s) return undefined
-  const k = normKey(s) as EstadoCivil
-  return CIVIL_VALUES.includes(k) ? k : undefined
 }
 
 // vacío -> null (para limpiar campo)
@@ -57,15 +75,71 @@ const toNull = (v: FormDataEntryValue | null) => {
   const s = (v ?? '').toString().trim()
   return s === '' ? null : s
 }
-function toOpt(v: FormDataEntryValue | null): string | undefined {
+const toOpt = (v: FormDataEntryValue | null): string | undefined => {
   const s = (v ?? '').toString().trim()
   return s ? s : undefined
 }
+const toIntOpt = (v: FormDataEntryValue | null): number | undefined => {
+  const s = toOpt(v)
+  if (!s) return undefined
+  const n = Number(s)
+  return Number.isNaN(n) ? undefined : n
+}
+
+// Detalle de errores DRF
+function flattenDRFErrors(err: unknown): string {
+  const data = (err as any)?.response?.data
+  if (!data) return ''
+  if (typeof data === 'string') return data
+  if (Array.isArray(data)) return data.join('\n')
+  if (typeof data === 'object') {
+    return Object.entries(data)
+      .map(([k, v]) =>
+        `${k}: ${Array.isArray(v) ? v.join(' ') : typeof v === 'string' ? v : JSON.stringify(v)}`)
+      .join('\n')
+  }
+  return String(data)
+}
+
+/* ---------- Tipos mínimos para catálogos ---------- */
+type CatalogItem = { id: number; nombre: string }
+type Paginated<T> = { results?: T[] } & Record<string, unknown>
+const unpag = <T,>(data: T[] | Paginated<T>): T[] => Array.isArray(data) ? data : (data.results ?? [])
 
 /* ---------- Componente ---------- */
 export default function EmpleadoCreatePage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+
+  // Catálogos (IDs reales)
+  const { data: departamentos } = useQuery({
+    queryKey: ['departamentos', 1000],
+    queryFn: async () => {
+      const { data } = await api.get<Paginated<CatalogItem> | CatalogItem[]>('/v1/departamentos/', { params: { page_size: 1000 } })
+      return unpag(data)
+    },
+  })
+  const { data: puestos } = useQuery({
+    queryKey: ['puestos', 1000],
+    queryFn: async () => {
+      const { data } = await api.get<Paginated<CatalogItem> | CatalogItem[]>('/v1/puestos/', { params: { page_size: 1000 } })
+      return unpag(data)
+    },
+  })
+  const { data: turnos } = useQuery({
+    queryKey: ['turnos', 1000],
+    queryFn: async () => {
+      const { data } = await api.get<Paginated<CatalogItem> | CatalogItem[]>('/v1/turnos/', { params: { page_size: 1000 } })
+      return unpag(data)
+    },
+  })
+  const { data: horarios } = useQuery({
+    queryKey: ['horarios', 1000],
+    queryFn: async () => {
+      const { data } = await api.get<Paginated<CatalogItem> | CatalogItem[]>('/v1/horarios/', { params: { page_size: 1000 } })
+      return unpag(data)
+    },
+  })
 
   const [activeStep, setActiveStep] = React.useState(0)
   const lastStep = steps.length - 1
@@ -109,9 +183,7 @@ export default function EmpleadoCreatePage() {
 
   // Bloquear Enter salvo en el último paso
   const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
-    if (e.key === 'Enter' && activeStep !== lastStep) {
-      e.preventDefault()
-    }
+    if (e.key === 'Enter' && activeStep !== lastStep) e.preventDefault()
   }
 
   const handleCancel = () => {
@@ -129,58 +201,56 @@ export default function EmpleadoCreatePage() {
     const includeFoto = !!(fotoFile && fotoFile.size > 0)
 
     const payload = {
-      // Identificación / personales
+      // Identificación / personales (también se validan en el propio form)
       num_empleado: String(fd.get('num_empleado') ?? '').trim(),
       activo: fd.get('activo') === 'on',
       nombres: String(fd.get('nombres') ?? '').trim(),
-      apellido_paterno: toOpt(fd.get('apellido_paterno')) ?? '',
-      apellido_materno: toOpt(fd.get('apellido_materno')),
-      fecha_nacimiento: toOpt(fd.get('fecha_nacimiento')) ?? '',
+      apellido_paterno: String(fd.get('apellido_paterno') ?? '').trim(),
+      apellido_materno: String(fd.get('apellido_materno') ?? '').trim(),
+      fecha_nacimiento: String(fd.get('fecha_nacimiento') ?? '').trim(),
 
       curp: toOpt(fd.get('curp')),
       rfc: toOpt(fd.get('rfc')),
       nss: toOpt(fd.get('nss')),
 
-      // Género normalizado (M/F/O) o null si vacío/no válido
       genero: (() => {
         const raw = toNull(fd.get('genero'))
         if (raw === null) return null
         return normalizeGenero(raw) ?? null
       })(),
 
-      // Estado civil normalizado al catálogo
-      estado_civil: (() => {
+      estado_civil: ((): EstadoCivil | null => {
         const raw = toNull(fd.get('estado_civil'))
-        if (raw === null) return null
-        return normalizeCivil(raw) ?? null
+        return (raw as EstadoCivil | null)
       })(),
 
-      // Escolaridad (catálogo libre, pero normalizamos a MAYÚSCULAS con guiones bajos)
-      escolaridad: (() => {
+      escolaridad: ((): Escolaridad | null => {
         const raw = toNull(fd.get('escolaridad'))
-        if (raw === null) return null
-        return normKey(raw)
+        return (raw as Escolaridad | null)
       })(),
 
-      // Laboral (labels UI; el API los ignora gracias al normalizador del cliente)
-      departamento_nombre: toOpt(fd.get('departamento_nombre')),
-      puesto_nombre: toOpt(fd.get('puesto_nombre')),
-      turno_nombre: toOpt(fd.get('turno_nombre')),
-      horario_nombre: toOpt(fd.get('horario_nombre')),
+      // Relaciones (IDs reales) — obligatorias
+      departamento_id: toIntOpt(fd.get('departamento_id')),
+      puesto_id: toIntOpt(fd.get('puesto_id')),
+      turno_id: toIntOpt(fd.get('turno_id')),
+      horario_id: toIntOpt(fd.get('horario_id')),
+
+      // Laboral — obligatorios
       fecha_ingreso: toOpt(fd.get('fecha_ingreso')),
       sueldo: toOpt(fd.get('sueldo')),
       tipo_contrato: toOpt(fd.get('tipo_contrato')),
       tipo_jornada: toOpt(fd.get('tipo_jornada')),
 
-      // Contacto
-      telefono: toOpt(fd.get('telefono')), // <- FIX: antes estaba "Telefono"
+      // Contacto — obligatorios
+      telefono: toOpt(fd.get('telefono')),
       celular: toOpt(fd.get('celular')),
       email: toOpt(fd.get('email')),
+
       contacto_emergencia_nombre: toOpt(fd.get('contacto_emergencia_nombre')),
       contacto_emergencia_parentesco: toOpt(fd.get('contacto_emergencia_parentesco')),
       contacto_emergencia_telefono: toOpt(fd.get('contacto_emergencia_telefono')),
 
-      // Dirección
+      // Dirección — obligatorios
       calle: toOpt(fd.get('calle')),
       numero: toOpt(fd.get('numero')),
       colonia: toOpt(fd.get('colonia')),
@@ -188,7 +258,7 @@ export default function EmpleadoCreatePage() {
       estado: toOpt(fd.get('estado')),
       cp: toOpt(fd.get('cp')),
 
-      // Bancario
+      // Bancario — opcionales
       banco: toOpt(fd.get('banco')),
       cuenta: toOpt(fd.get('cuenta')),
       clabe: toOpt(fd.get('clabe')),
@@ -200,23 +270,18 @@ export default function EmpleadoCreatePage() {
       ...(includeFoto ? { foto: fotoFile } : {}),
     } as EmpleadoCreate & Record<string, any>
 
-    // Requeridos mínimos
-    if (!payload.num_empleado || !payload.nombres || !payload.fecha_nacimiento) {
-      formRef.current?.reportValidity()
-      return
-    }
+    // Requeridos mínimos + nuevos requeridos ya están cubiertos por `required` + pattern del form.
+    // Si quieres una validación extra aquí, podríamos re-checar, pero el form ya bloquea submit.
 
     await mutateAsync(payload)
   }
 
-  // Avance seguro (evita submits fantasma)
+  // Avance seguro
   const handleNext = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
     e.stopPropagation()
     if (!validateCurrentStep()) return
-    setTimeout(() => {
-      setActiveStep((s) => Math.min(s + 1, lastStep))
-    }, 0)
+    setTimeout(() => setActiveStep((s) => Math.min(s + 1, lastStep)), 0)
   }
   const handleBack = () => setActiveStep((s) => Math.max(s - 1, 0))
 
@@ -260,16 +325,16 @@ export default function EmpleadoCreatePage() {
             Cancelar
           </Button>
 
-            <Button
-              type="button"
-              variant="outlined"
-              startIcon={<NavigateBeforeIcon />}
-              onClick={handleBack}
-              size="small"
-              disabled={activeStep === 0 || isPending}
-            >
-              Atrás
-            </Button>
+          <Button
+            type="button"
+            variant="outlined"
+            startIcon={<NavigateBeforeIcon />}
+            onClick={handleBack}
+            size="small"
+            disabled={activeStep === 0 || isPending}
+          >
+            Atrás
+          </Button>
 
           {activeStep === lastStep ? (
             <Button
@@ -312,6 +377,9 @@ export default function EmpleadoCreatePage() {
           {`No se pudo crear el empleado${
             (createError as any)?.response?.status ? ` (HTTP ${(createError as any).response.status})` : ''
           }.`}
+          <Box component="pre" sx={{ whiteSpace: 'pre-wrap', mt: 1, fontSize: 12 }}>
+            {flattenDRFErrors(createError)}
+          </Box>
         </Alert>
       )}
 
@@ -331,8 +399,8 @@ export default function EmpleadoCreatePage() {
             <FormControlLabel control={<Checkbox name="activo" defaultChecked disabled={isPending} />} label="Activo" />
 
             <TextField name="nombres" label="Nombres" required disabled={isPending} />
-            <TextField name="apellido_paterno" label="Apellido paterno" disabled={isPending} />
-            <TextField name="apellido_materno" label="Apellido materno" disabled={isPending} />
+            <TextField name="apellido_paterno" label="Apellido paterno" required disabled={isPending} />
+            <TextField name="apellido_materno" label="Apellido materno" required disabled={isPending} />
 
             <TextField
               name="fecha_nacimiento"
@@ -343,48 +411,61 @@ export default function EmpleadoCreatePage() {
               disabled={isPending}
             />
 
-            <TextField name="curp" label="CURP" disabled={isPending} />
-            <TextField name="rfc" label="RFC" disabled={isPending} />
-            <TextField name="nss" label="NSS" disabled={isPending} />
-
-            {/* Género (select) */}
+            {/* CURP (obligatoria) */}
             <TextField
-              name="genero"
-              label="Género"
-              select
+              name="curp"
+              label="CURP"
+              required
               disabled={isPending}
-              defaultValue=""
-            >
-              <MenuItem value="">(Sin dato)</MenuItem>
+              inputProps={{ pattern: patternAttr(RE_CURP), maxLength: 18 }}
+              onBlur={toUpperOnBlur}
+              helperText="18 caracteres, formato oficial"
+            />
+
+            {/* RFC (obligatorio) */}
+            <TextField
+              name="rfc"
+              label="RFC"
+              required
+              disabled={isPending}
+              inputProps={{ pattern: patternAttr(RE_RFC), maxLength: 13 }}
+              onBlur={toUpperOnBlur}
+              helperText="12–13 caracteres (personas físicas/morales)"
+            />
+
+            {/* NSS (obligatorio) */}
+            <TextField
+              name="nss"
+              label="NSS"
+              required
+              disabled={isPending}
+              inputProps={{ pattern: patternAttr(RE_NSS), maxLength: 11, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="11 dígitos"
+            />
+
+            {/* Género (obligatorio) */}
+            <TextField name="genero" label="Género" select required disabled={isPending} defaultValue="">
+              <MenuItem value="">(Selecciona)</MenuItem>
               {GENEROS.map(opt => (
                 <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
               ))}
             </TextField>
 
-            {/* Estado civil (select) */}
-            <TextField
-              name="estado_civil"
-              label="Estado civil"
-              select
-              disabled={isPending}
-              defaultValue=""
-            >
-              <MenuItem value="">(Sin dato)</MenuItem>
+            {/* Estado civil (obligatorio) */}
+            <TextField name="estado_civil" label="Estado civil" select required disabled={isPending} defaultValue="">
+              <MenuItem value="">(Selecciona)</MenuItem>
               {ESTADOS_CIVILES.map(opt => (
                 <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
               ))}
             </TextField>
 
-            {/* Escolaridad (select) */}
-            <TextField name="escolaridad" label="Escolaridad" select disabled={isPending} defaultValue="">
-              <MenuItem value="">(Sin dato)</MenuItem>
-              <MenuItem value="PRIMARIA">Primaria</MenuItem>
-              <MenuItem value="SECUNDARIA">Secundaria</MenuItem>
-              <MenuItem value="BACHILLERATO">Bachillerato/Preparatoria</MenuItem>
-              <MenuItem value="TSU">TSU / Técnico</MenuItem>
-              <MenuItem value="LICENCIATURA">Licenciatura/Ingeniería</MenuItem>
-              <MenuItem value="MAESTRIA">Maestría</MenuItem>
-              <MenuItem value="DOCTORADO">Doctorado</MenuItem>
+            {/* Escolaridad (obligatoria) */}
+            <TextField name="escolaridad" label="Escolaridad" select required disabled={isPending} defaultValue="">
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {ESCOLARIDADES.map(opt => (
+                <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+              ))}
             </TextField>
           </Grid2>
 
@@ -408,28 +489,139 @@ export default function EmpleadoCreatePage() {
         {/* PASO 2: Laboral */}
         <StepPanel active={activeStep === 1} index={1}>
           <Grid2>
-            <TextField name="departamento_nombre" label="Departamento" disabled={isPending} />
-            <TextField name="puesto_nombre" label="Puesto" disabled={isPending} />
-            <TextField name="turno_nombre" label="Turno" disabled={isPending} />
-            <TextField name="horario_nombre" label="Horario" disabled={isPending} />
+            {/* Relaciones con IDs reales — obligatorias */}
+            <TextField
+              name="departamento_id"
+              label="Departamento"
+              select
+              required
+              disabled={isPending || !(departamentos?.length)}
+              defaultValue=""
+            >
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {(departamentos ?? []).map(d => (
+                <MenuItem key={d.id} value={d.id}>{d.nombre}</MenuItem>
+              ))}
+            </TextField>
 
-            <TextField name="fecha_ingreso" label="Fecha ingreso" type="date" InputLabelProps={{ shrink: true }} disabled={isPending} />
-            <TextField name="sueldo" label="Sueldo" type="number" inputProps={{ step: '0.01' }} disabled={isPending} />
-            <TextField name="tipo_contrato" label="Tipo de contrato" disabled={isPending} />
-            <TextField name="tipo_jornada" label="Tipo de jornada" disabled={isPending} />
+            <TextField
+              name="puesto_id"
+              label="Puesto"
+              select
+              required
+              disabled={isPending || !(puestos?.length)}
+              defaultValue=""
+            >
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {(puestos ?? []).map(p => (
+                <MenuItem key={p.id} value={p.id}>{p.nombre}</MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              name="turno_id"
+              label="Turno"
+              select
+              required
+              disabled={isPending || !(turnos?.length)}
+              defaultValue=""
+            >
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {(turnos ?? []).map(t => (
+                <MenuItem key={t.id} value={t.id}>{t.nombre}</MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              name="horario_id"
+              label="Horario"
+              select
+              required
+              disabled={isPending || !(horarios?.length)}
+              defaultValue=""
+            >
+              <MenuItem value="">(Selecciona)</MenuItem>
+              {(horarios ?? []).map(h => (
+                <MenuItem key={h.id} value={h.id}>{h.nombre}</MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              name="fecha_ingreso"
+              label="Fecha ingreso"
+              type="date"
+              InputLabelProps={{ shrink: true }}
+              required
+              disabled={isPending}
+            />
+            <TextField
+              name="sueldo"
+              label="Sueldo"
+              type="number"
+              required
+              inputProps={{ step: '0.01', min: 0 }}
+              disabled={isPending}
+            />
+
+            {/* Tipo de contrato (obligatorio) */}
+            <TextField name="tipo_contrato" label="Tipo de contrato" select required disabled={isPending} defaultValue="">
+              <MenuItem value="">(Selecciona)</MenuItem>
+              <MenuItem value="determinado">Determinado</MenuItem>
+              <MenuItem value="indeterminado">Indeterminado</MenuItem>
+              <MenuItem value="obra">Obra o proyecto</MenuItem>
+            </TextField>
+
+            {/* Tipo de jornada (obligatorio) */}
+            <TextField name="tipo_jornada" label="Tipo de jornada" select required disabled={isPending} defaultValue="">
+              <MenuItem value="">(Selecciona)</MenuItem>
+              <MenuItem value="diurna">Diurna</MenuItem>
+              <MenuItem value="mixta">Mixta</MenuItem>
+              <MenuItem value="nocturna">Nocturna</MenuItem>
+            </TextField>
           </Grid2>
         </StepPanel>
 
         {/* PASO 3: Contacto y dirección */}
         <StepPanel active={activeStep === 2} index={2}>
           <Grid2>
-            <TextField name="telefono" label="Teléfono" disabled={isPending} /> {/* <- FIX */}
-            <TextField name="celular" label="Celular" disabled={isPending} />
-            <TextField name="email" label="Email" type="email" disabled={isPending} />
+            {/* Teléfono (10 dígitos obligatorio) */}
+            <TextField
+              name="telefono"
+              label="Teléfono"
+              required
+              disabled={isPending}
+              inputProps={{ pattern: patternAttr(RE_PHONE10), maxLength: 10, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="10 dígitos"
+            />
 
-            <TextField name="contacto_emergencia_nombre" label="Contacto emergencia - Nombre" disabled={isPending} />
-            <TextField name="contacto_emergencia_parentesco" label="Contacto emergencia - Parentesco" disabled={isPending} />
-            <TextField name="contacto_emergencia_telefono" label="Contacto emergencia - Teléfono" disabled={isPending} />
+            {/* Celular (10 dígitos obligatorio) */}
+            <TextField
+              name="celular"
+              label="Celular"
+              required
+              disabled={isPending}
+              inputProps={{ pattern: patternAttr(RE_PHONE10), maxLength: 10, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="10 dígitos"
+            />
+
+            {/* Email (obligatorio) */}
+            <TextField name="email" label="Email" type="email" required disabled={isPending} />
+
+            <TextField name="contacto_emergencia_nombre" label="Contacto emergencia - Nombre" required disabled={isPending} />
+            <TextField name="contacto_emergencia_parentesco" label="Contacto emergencia - Parentesco" required disabled={isPending} />
+
+            {/* Teléfono de contacto (10 dígitos obligatorio) */}
+            <TextField
+              name="contacto_emergencia_telefono"
+              label="Contacto emergencia - Teléfono"
+              required
+              disabled={isPending}
+              inputProps={{ pattern: patternAttr(RE_PHONE10), maxLength: 10, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="10 dígitos"
+            />
           </Grid2>
 
           <Divider sx={{ my: 1 }} />
@@ -437,12 +629,20 @@ export default function EmpleadoCreatePage() {
           <Stack spacing={1}>
             <Typography variant="subtitle2" color="text.secondary">Dirección</Typography>
             <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap">
-              <TextField name="calle" label="Calle" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
-              <TextField name="numero" label="Número" sx={{ width: 140 }} disabled={isPending} />
-              <TextField name="colonia" label="Colonia" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
-              <TextField name="municipio" label="Municipio" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
-              <TextField name="estado" label="Estado" sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
-              <TextField name="cp" label="CP" sx={{ width: 140 }} disabled={isPending} />
+              <TextField name="calle" label="Calle" required sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
+              <TextField name="numero" label="Número" required sx={{ width: 140 }} disabled={isPending} />
+              <TextField name="colonia" label="Colonia" required sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
+              <TextField name="municipio" label="Municipio" required sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
+              <TextField name="estado" label="Estado" required sx={{ flex: 1, minWidth: 160 }} disabled={isPending} />
+              <TextField
+                name="cp"
+                label="CP"
+                required
+                sx={{ width: 140 }}
+                disabled={isPending}
+                inputProps={{ pattern: patternAttr(RE_CP), maxLength: 5, inputMode: 'numeric' }}
+                helperText="5 dígitos"
+              />
             </Stack>
           </Stack>
 
@@ -456,12 +656,30 @@ export default function EmpleadoCreatePage() {
           />
         </StepPanel>
 
-        {/* PASO 4: Bancarios & Confirmación */}
+        {/* PASO 4: Bancarios & Confirmación (opcionales) */}
         <StepPanel active={activeStep === 3} index={3}>
           <Grid2>
             <TextField name="banco" label="Banco" disabled={isPending} />
-            <TextField name="cuenta" label="Cuenta" disabled={isPending} />
-            <TextField name="clabe" label="CLABE" disabled={isPending} />
+
+            {/* Cuenta */}
+            <TextField
+              name="cuenta"
+              label="Cuenta"
+              disabled={isPending}
+              inputProps={{ pattern: patternAttr(RE_CUENTA), maxLength: 20, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="10 a 20 dígitos"
+            />
+
+            {/* CLABE */}
+            <TextField
+              name="clabe"
+              label="CLABE"
+              disabled={isPending}
+              inputProps={{ pattern: patternAttr(RE_CLABE), maxLength: 18, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="18 dígitos"
+            />
           </Grid2>
 
           <Box sx={{ mt: 2 }}>

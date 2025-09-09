@@ -1,3 +1,4 @@
+// src/features/empleados/EmpleadoEditPage.tsx
 import * as React from 'react'
 import { useParams, Link as RouterLink, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -117,6 +118,24 @@ function flattenDRFErrors(err: unknown): string {
       .join('\n')
   }
   return String(data)
+}
+
+/* ---------- Validaciones (regex y normalizadores UI) ---------- */
+const RE_CURP   = /^[A-Z]{4}\d{6}[HM][A-Z]{5}\d{2}$/         // 18, mayúsculas
+const RE_RFC    = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/           // 12-13
+const RE_NSS    = /^\d{11}$/                                 // 11 dígitos
+const RE_CLABE  = /^\d{18}$/                                 // 18 dígitos
+const RE_CUENTA = /^\d{10,20}$/                              // 10-20 dígitos
+const RE_PHONE  = /^\+?[0-9\s-]{7,20}$/                      // teléfono flexible
+
+const patternAttr = (re: RegExp) => re.source
+
+const toUpperOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+  e.currentTarget.value = e.currentTarget.value.toUpperCase().trim()
+}
+
+const stripSpacesDashesOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+  e.currentTarget.value = e.currentTarget.value.replace(/[\s-]+/g, '')
 }
 
 /* ---------- Componente ---------- */
@@ -421,10 +440,47 @@ export default function EmpleadoEditPage() {
             <TextField name="apellido_paterno" label="Apellido paterno" disabled={isPending} defaultValue={(data as any).apellido_paterno || ''} />
             <TextField name="apellido_materno" label="Apellido materno" disabled={isPending} defaultValue={(data as any).apellido_materno || ''} />
 
-            <TextField name="fecha_nacimiento" label="Fecha nacimiento" type="date" InputLabelProps={{ shrink: true }} disabled={isPending} defaultValue={formatDateForInput((data as any).fecha_nacimiento)} />
-            <TextField name="curp" label="CURP" disabled={isPending} defaultValue={(data as any).curp || ''} />
-            <TextField name="rfc" label="RFC" disabled={isPending} defaultValue={(data as any).rfc || ''} />
-            <TextField name="nss" label="NSS" disabled={isPending} defaultValue={(data as any).nss || ''} />
+            <TextField
+              name="fecha_nacimiento"
+              label="Fecha nacimiento"
+              type="date"
+              InputLabelProps={{ shrink: true }}
+              disabled={isPending}
+              defaultValue={formatDateForInput((data as any).fecha_nacimiento)}
+            />
+
+            {/* CURP */}
+            <TextField
+              name="curp"
+              label="CURP"
+              disabled={isPending}
+              defaultValue={(data as any).curp || ''}
+              inputProps={{ pattern: patternAttr(RE_CURP), maxLength: 18 }}
+              onBlur={toUpperOnBlur}
+              helperText="18 caracteres, formato oficial"
+            />
+
+            {/* RFC */}
+            <TextField
+              name="rfc"
+              label="RFC"
+              disabled={isPending}
+              defaultValue={(data as any).rfc || ''}
+              inputProps={{ pattern: patternAttr(RE_RFC), maxLength: 13 }}
+              onBlur={toUpperOnBlur}
+              helperText="12–13 caracteres (PF/PM)"
+            />
+
+            {/* NSS */}
+            <TextField
+              name="nss"
+              label="NSS"
+              disabled={isPending}
+              defaultValue={(data as any).nss || ''}
+              inputProps={{ pattern: patternAttr(RE_NSS), maxLength: 11, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="11 dígitos"
+            />
 
             {/* Género (select) */}
             <TextField
@@ -493,7 +549,15 @@ export default function EmpleadoEditPage() {
             <TextField name="turno_nombre" label="Turno" disabled={isPending} defaultValue={(data as any).turno_nombre || ''} />
             <TextField name="horario_nombre" label="Horario" disabled={isPending} defaultValue={(data as any).horario_nombre || ''} />
 
-            <TextField name="fecha_ingreso" label="Fecha ingreso" type="date" InputLabelProps={{ shrink: true }} disabled={isPending} defaultValue={formatDateForInput((data as any).fecha_ingreso)} />
+            <TextField
+              name="fecha_ingreso"
+              label="Fecha ingreso"
+              type="date"
+              InputLabelProps={{ shrink: true }}
+              disabled={isPending}
+              defaultValue={formatDateForInput((data as any).fecha_ingreso)}
+            />
+
             <TextField name="sueldo" label="Sueldo" type="number" inputProps={{ step: '0.01' }} disabled={isPending} defaultValue={(data as any).sueldo ?? ''} />
 
             {/* Tipo de contrato */}
@@ -529,8 +593,22 @@ export default function EmpleadoEditPage() {
         {/* PASO 3: Contacto y dirección */}
         <StepPanel active={activeStep === 2} index={2}>
           <Grid2>
-            <TextField name="telefono" label="Teléfono" disabled={isPending} defaultValue={(data as any).telefono || ''} />
-            <TextField name="celular" label="Celular" disabled={isPending} defaultValue={(data as any).celular || ''} />
+            <TextField
+              name="telefono"
+              label="Teléfono"
+              disabled={isPending}
+              defaultValue={(data as any).telefono || ''}
+              inputProps={{ pattern: patternAttr(RE_PHONE), maxLength: 20, inputMode: 'tel' }}
+              helperText="7–20 caracteres; admite +, espacios y guiones"
+            />
+            <TextField
+              name="celular"
+              label="Celular"
+              disabled={isPending}
+              defaultValue={(data as any).celular || ''}
+              inputProps={{ pattern: patternAttr(RE_PHONE), maxLength: 20, inputMode: 'tel' }}
+              helperText="7–20 caracteres; admite +, espacios y guiones"
+            />
             <TextField name="email" label="Email" type="email" disabled={isPending} defaultValue={data.email || ''} />
 
             <TextField name="contacto_emergencia_nombre" label="Contacto emergencia - Nombre" disabled={isPending} defaultValue={(data as any).contacto_emergencia_nombre || ''} />
@@ -567,8 +645,24 @@ export default function EmpleadoEditPage() {
         <StepPanel active={activeStep === 3} index={3}>
           <Grid2>
             <TextField name="banco" label="Banco" disabled={isPending} defaultValue={(data as any).banco || ''} />
-            <TextField name="cuenta" label="Cuenta" disabled={isPending} defaultValue={(data as any).cuenta || ''} />
-            <TextField name="clabe" label="CLABE" disabled={isPending} defaultValue={(data as any).clabe || ''} />
+            <TextField
+              name="cuenta"
+              label="Cuenta"
+              disabled={isPending}
+              defaultValue={(data as any).cuenta || ''}
+              inputProps={{ pattern: patternAttr(RE_CUENTA), maxLength: 20, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="10 a 20 dígitos"
+            />
+            <TextField
+              name="clabe"
+              label="CLABE"
+              disabled={isPending}
+              defaultValue={(data as any).clabe || ''}
+              inputProps={{ pattern: patternAttr(RE_CLABE), maxLength: 18, inputMode: 'numeric' }}
+              onBlur={stripSpacesDashesOnBlur}
+              helperText="18 dígitos"
+            />
           </Grid2>
 
           <Box sx={{ mt: 2 }}>

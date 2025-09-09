@@ -140,6 +140,9 @@ function hasFileLike(obj: unknown): boolean {
   return false
 }
 
+/** Campos a los que les quitamos espacios/guiones antes de enviar */
+const STRIP_NUMERIC_KEYS = new Set(['clabe', 'cuenta', 'nss', 'cp'])
+
 /** Convierte Date a 'YYYY-MM-DD' (shallow) y limpia UI-only fields */
 const UI_ONLY_KEYS = new Set([
   'departamento_nombre',
@@ -156,14 +159,22 @@ function normalizeForSubmit<T extends Record<string, any>>(payload: T): T {
   for (const [k, v] of Object.entries(payload)) {
     if (UI_ONLY_KEYS.has(k)) continue
     let val = v
+
+    // fechas -> 'YYYY-MM-DD'
     if (val instanceof Date) val = val.toISOString().slice(0, 10)
 
-    // Alineado con el modelo:
+    // casing según modelo
     if (k === 'genero' && typeof val === 'string') val = val.toUpperCase()      // 'M'|'F'|'O'
     if ((k === 'estado_civil' || k === 'tipo_contrato' || k === 'tipo_jornada') && typeof val === 'string') {
-      val = val.toLowerCase()                                                   // backend espera minúsculas
+      val = val.toLowerCase()
     }
-    // escolaridad: texto libre → no tocar casing
+    // email en minúsculas
+    if (k === 'email' && typeof val === 'string') val = val.trim().toLowerCase()
+
+    // quitar espacios/guiones en numéricos
+    if (STRIP_NUMERIC_KEYS.has(k) && typeof val === 'string') {
+      val = val.replace(/[\s-]+/g, '')
+    }
 
     out[k] = val
   }
@@ -176,11 +187,20 @@ function toFormData(payload: Record<string, any>): FormData {
     if (UI_ONLY_KEYS.has(k)) continue
     let v = raw
     if (v === undefined || v === null) continue
+
+    // fechas -> 'YYYY-MM-DD'
     if (v instanceof Date) v = v.toISOString().slice(0, 10)
 
+    // casing según modelo
     if (k === 'genero' && typeof v === 'string') v = v.toUpperCase()
     if ((k === 'estado_civil' || k === 'tipo_contrato' || k === 'tipo_jornada') && typeof v === 'string') {
       v = v.toLowerCase()
+    }
+    if (k === 'email' && typeof v === 'string') v = v.trim().toLowerCase()
+
+    // quitar espacios/guiones en numéricos
+    if (STRIP_NUMERIC_KEYS.has(k) && typeof v === 'string') {
+      v = v.replace(/[\s-]+/g, '')
     }
 
     if (v instanceof File || v instanceof Blob) {
