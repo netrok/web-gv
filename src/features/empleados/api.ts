@@ -1,5 +1,6 @@
+// src/features/empleados/api.ts
 import api from '@/api/client'
-import type { Empleado } from './types'
+import type { Empleado, Genero, EstadoCivil } from './types'
 
 /* ---------- Tipos auxiliares ---------- */
 type Paginated<T> = {
@@ -58,53 +59,75 @@ export async function fetchEmpleadoById(id: number | string): Promise<Empleado> 
 export const getEmpleado = fetchEmpleadoById
 
 /* ---------- Escrituras ---------- */
-/** Shape para crear/editar. Ajusta campos opcionales según tu backend */
+/** Payload para crear/editar. Ajusta nullables según tu backend */
 export type EmpleadoCreate = {
+  // Requeridos mínimos
   num_empleado: string
   nombres: string
   apellido_paterno: string
-  apellido_materno?: string | null
-
-  /** FIX: agregado para evitar TS2353 */
   fecha_nacimiento: string | Date
 
-  genero?: string
-  estado_civil?: string | null
+  // Personales
+  apellido_materno?: string | null
+  genero?: Genero | null                // 'M' | 'F' | 'O'
+  estado_civil?: EstadoCivil | null     // 'soltero'|'casado'|'union_libre'|'divorciado'|'viudo'
+  escolaridad?: string | null           // texto libre (no choices en el modelo)
   curp?: string | null
   rfc?: string | null
   nss?: string | null
 
-  /** Alineado a tu modelo */
+  // Contacto
   telefono?: string | null
+  celular?: string | null
   email?: string | null
 
-  /** Generalmente el backend espera IDs */
-  departamento_id?: number
-  puesto_id?: number
+  // Contacto de emergencia
+  contacto_emergencia_nombre?: string | null
+  contacto_emergencia_parentesco?: string | null
+  contacto_emergencia_telefono?: string | null
 
-  /** Acepta Date o string YYYY-MM-DD */
-  fecha_ingreso?: string | Date
+  // Relaciones (IDs reales)
+  departamento_id?: number | null
+  puesto_id?: number | null
+  turno_id?: number | null
+  horario_id?: number | null
 
+  // Laboral
+  fecha_ingreso?: string | Date | null
+  sueldo?: number | string | null
+  tipo_contrato?: string | null         // 'determinado'|'indeterminado'|'obra'
+  tipo_jornada?: string | null          // 'diurna'|'mixta'|'nocturna'
   activo?: boolean
 
-  /** Direcciones / bancos (opcionales) */
-  calle?: string
-  numero?: string
-  colonia?: string
-  municipio?: string
-  estado?: string
-  cp?: string
-  banco?: string
-  cuenta?: string
+  // Dirección
+  calle?: string | null
+  numero?: string | null
+  colonia?: string | null
+  municipio?: string | null
+  estado?: string | null
+  cp?: string | null
 
-  /** Archivos */
+  // Bancarios
+  banco?: string | null
+  cuenta?: string | null
+  clabe?: string | null
+
+  // Otros
+  notas?: string | null
+
+  // Archivos
   foto?: File | null
 
-  /** Soporta tus campos *_nombre si tu UI los usa temporalmente */
+  /** Labels temporales usados por la UI (no enviarlos si tu API no los acepta) */
   departamento_nombre?: string
   puesto_nombre?: string
   turno_nombre?: string
   horario_nombre?: string
+
+  /** Opcionales de display que podría enviar el API (no enviar) */
+  genero_display?: string | null
+  estado_civil_display?: string | null
+  escolaridad_display?: string | null
 }
 
 /* --- helpers JSON/FormData auto --- */
@@ -117,15 +140,32 @@ function hasFileLike(obj: unknown): boolean {
   return false
 }
 
-/** Convierte Date a 'YYYY-MM-DD' en shallow props */
+/** Convierte Date a 'YYYY-MM-DD' (shallow) y limpia UI-only fields */
+const UI_ONLY_KEYS = new Set([
+  'departamento_nombre',
+  'puesto_nombre',
+  'turno_nombre',
+  'horario_nombre',
+  'genero_display',
+  'estado_civil_display',
+  'escolaridad_display',
+])
+
 function normalizeForSubmit<T extends Record<string, any>>(payload: T): T {
   const out: Record<string, any> = {}
   for (const [k, v] of Object.entries(payload)) {
-    if (v instanceof Date) {
-      out[k] = v.toISOString().slice(0, 10)
-    } else {
-      out[k] = v
+    if (UI_ONLY_KEYS.has(k)) continue
+    let val = v
+    if (val instanceof Date) val = val.toISOString().slice(0, 10)
+
+    // Alineado con el modelo:
+    if (k === 'genero' && typeof val === 'string') val = val.toUpperCase()      // 'M'|'F'|'O'
+    if ((k === 'estado_civil' || k === 'tipo_contrato' || k === 'tipo_jornada') && typeof val === 'string') {
+      val = val.toLowerCase()                                                   // backend espera minúsculas
     }
+    // escolaridad: texto libre → no tocar casing
+
+    out[k] = val
   }
   return out as T
 }
@@ -133,14 +173,23 @@ function normalizeForSubmit<T extends Record<string, any>>(payload: T): T {
 function toFormData(payload: Record<string, any>): FormData {
   const fd = new FormData()
   for (const [k, raw] of Object.entries(payload)) {
-    const v = raw instanceof Date ? raw.toISOString().slice(0, 10) : raw
+    if (UI_ONLY_KEYS.has(k)) continue
+    let v = raw
     if (v === undefined || v === null) continue
+    if (v instanceof Date) v = v.toISOString().slice(0, 10)
+
+    if (k === 'genero' && typeof v === 'string') v = v.toUpperCase()
+    if ((k === 'estado_civil' || k === 'tipo_contrato' || k === 'tipo_jornada') && typeof v === 'string') {
+      v = v.toLowerCase()
+    }
+
     if (v instanceof File || v instanceof Blob) {
       fd.append(k, v)
     } else if (Array.isArray(v)) {
       v.forEach(item => {
         if (item !== undefined && item !== null) {
-          const val = item instanceof Date ? item.toISOString().slice(0, 10) : item
+          let val = item
+          if (val instanceof Date) val = val.toISOString().slice(0, 10)
           fd.append(k, val instanceof Blob ? val : String(val))
         }
       })
@@ -153,7 +202,7 @@ function toFormData(payload: Record<string, any>): FormData {
   return fd
 }
 
-/* --- CREATE --- */
+/* --- CREATE (POST) --- */
 export async function createEmpleado(
   input: EmpleadoCreate | FormData
 ): Promise<Empleado> {
@@ -170,7 +219,7 @@ export async function createEmpleado(
   return data
 }
 
-/* --- UPDATE --- */
+/* --- UPDATE (PUT) --- */
 export async function updateEmpleado(
   id: number | string,
   input: Partial<EmpleadoCreate> | FormData
@@ -183,6 +232,24 @@ export async function updateEmpleado(
       : normalizeForSubmit(input as any)
 
   const { data } = await api.put<Empleado>(`${EMPLEADOS_PATH}${id}/`, body, {
+    headers: body instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
+  })
+  return data
+}
+
+/* --- PATCH (parcial) --- */
+export async function patchEmpleado(
+  id: number | string,
+  input: Partial<EmpleadoCreate> | FormData
+): Promise<Empleado> {
+  const body =
+    input instanceof FormData
+      ? input
+      : hasFileLike(input)
+      ? toFormData(normalizeForSubmit(input as any))
+      : normalizeForSubmit(input as any)
+
+  const { data } = await api.patch<Empleado>(`${EMPLEADOS_PATH}${id}/`, body, {
     headers: body instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
   })
   return data

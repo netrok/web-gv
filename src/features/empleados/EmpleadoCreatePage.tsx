@@ -1,3 +1,4 @@
+// src/features/empleados/EmpleadoCreatePage.tsx
 import * as React from 'react'
 import { useNavigate, Link as RouterLink } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -11,45 +12,83 @@ import {
   FormControlLabel,
   LinearProgress,
   Paper,
-  Snackbar,
   Stack,
   Step,
   StepLabel,
   Stepper,
   TextField,
   Typography,
+  MenuItem,
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import SaveIcon from '@mui/icons-material/Save'
+import CloseIcon from '@mui/icons-material/Close'
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore'
 import NavigateNextIcon from '@mui/icons-material/NavigateNext'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 
-// ❌ removido: import type { Empleado } from './types'
 import { createEmpleado, type EmpleadoCreate } from './api'
+import { GENEROS, ESTADOS_CIVILES, type Genero, type EstadoCivil } from './types'
 
 const steps = ['Identificación', 'Laboral', 'Contacto y dirección', 'Bancarios & Confirmación']
 
+// ---------- Helpers choices/normalización ----------
+const normKey = (s?: string) =>
+  (s ?? '')
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .trim().replace(/\s+/g, '_').toUpperCase()
+
+const GENERO_VALUES = GENEROS.map(o => o.value) as ReadonlyArray<Genero>
+const CIVIL_VALUES  = ESTADOS_CIVILES.map(o => o.value) as ReadonlyArray<EstadoCivil>
+
+const normalizeGenero = (s?: string | null): Genero | undefined => {
+  if (!s) return undefined
+  const k = normKey(s) as Genero
+  return GENERO_VALUES.includes(k) ? k : undefined
+}
+const normalizeCivil = (s?: string | null): EstadoCivil | undefined => {
+  if (!s) return undefined
+  const k = normKey(s) as EstadoCivil
+  return CIVIL_VALUES.includes(k) ? k : undefined
+}
+
+// vacío -> null (para limpiar campo)
+const toNull = (v: FormDataEntryValue | null) => {
+  const s = (v ?? '').toString().trim()
+  return s === '' ? null : s
+}
+function toOpt(v: FormDataEntryValue | null): string | undefined {
+  const s = (v ?? '').toString().trim()
+  return s ? s : undefined
+}
+
+/* ---------- Componente ---------- */
 export default function EmpleadoCreatePage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
 
   const [activeStep, setActiveStep] = React.useState(0)
   const lastStep = steps.length - 1
-  const [successOpen, setSuccessOpen] = React.useState(false)
   const [fotoPreview, setFotoPreview] = React.useState<string | null>(null)
+
+  const formRef = React.useRef<HTMLFormElement>(null)
+  const [dirty, setDirty] = React.useState(false)
+  React.useEffect(() => {
+    const form = formRef.current
+    if (!form) return
+    const onChange = () => setDirty(true)
+    form.addEventListener('change', onChange)
+    return () => form.removeEventListener('change', onChange)
+  }, [])
 
   const { mutateAsync, isPending, isError: isCreateError, error: createError } = useMutation({
     mutationFn: (payload: EmpleadoCreate) => createEmpleado(payload),
-    onSuccess: (nuevo) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['empleados'] }).catch(() => {})
-      setSuccessOpen(true)
-      const id = (nuevo as any)?.id ?? (nuevo as any)?.num_empleado
-      navigate(id ? `/empleados/${id}` : '/empleados', { replace: true })
+      navigate('/empleados', { replace: true, state: { flash: 'Empleado creado' } })
     },
   })
 
-  const formRef = React.useRef<HTMLFormElement>(null)
   const progress = Math.round(((activeStep + 1) / steps.length) * 100)
 
   function validateCurrentStep(): boolean {
@@ -68,20 +107,16 @@ export default function EmpleadoCreatePage() {
     return true
   }
 
-  function toOpt(v: FormDataEntryValue | null): string | undefined {
-    const s = (v ?? '').toString().trim()
-    return s ? s : undefined
-  }
-  // 🔒 Requeridos como string (no undefined)
-  function toReq(v: FormDataEntryValue | null): string {
-    return (v ?? '').toString().trim()
-  }
-
   // Bloquear Enter salvo en el último paso
   const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
     if (e.key === 'Enter' && activeStep !== lastStep) {
       e.preventDefault()
     }
+  }
+
+  const handleCancel = () => {
+    if (dirty && !window.confirm('Hay cambios sin guardar. ¿Salir sin guardar?')) return
+    navigate('/empleados', { replace: true })
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -90,32 +125,44 @@ export default function EmpleadoCreatePage() {
     if (!validateCurrentStep()) return
 
     const fd = new FormData(e.currentTarget)
+    const fotoFile = (fd.get('foto') as File) ?? null
+    const includeFoto = !!(fotoFile && fotoFile.size > 0)
 
-    // Foto segura
-    const fotoEntry = fd.get('foto')
-    const fotoFile = fotoEntry instanceof File ? fotoEntry : null
-
-    const fechaNac = toReq(fd.get('fecha_nacimiento')) // '' si vacío
-    const payload: EmpleadoCreate = {
+    const payload = {
       // Identificación / personales
-      num_empleado: toReq(fd.get('num_empleado')),
+      num_empleado: String(fd.get('num_empleado') ?? '').trim(),
       activo: fd.get('activo') === 'on',
-      nombres: toReq(fd.get('nombres')),
-
-      // 🔒 requeridos en tu tipo EmpleadoCreate
-      apellido_paterno: toReq(fd.get('apellido_paterno')),
-      fecha_nacimiento: fechaNac, // string | Date – aquí string ('' si vacío)
-
-      // opcionales
+      nombres: String(fd.get('nombres') ?? '').trim(),
+      apellido_paterno: toOpt(fd.get('apellido_paterno')) ?? '',
       apellido_materno: toOpt(fd.get('apellido_materno')),
+      fecha_nacimiento: toOpt(fd.get('fecha_nacimiento')) ?? '',
+
       curp: toOpt(fd.get('curp')),
       rfc: toOpt(fd.get('rfc')),
       nss: toOpt(fd.get('nss')),
-      genero: toOpt(fd.get('genero')),
-      estado_civil: toOpt(fd.get('estado_civil')),
-      escolaridad: toOpt(fd.get('escolaridad')),
 
-      // Laboral
+      // Género normalizado (M/F/O) o null si vacío/no válido
+      genero: (() => {
+        const raw = toNull(fd.get('genero'))
+        if (raw === null) return null
+        return normalizeGenero(raw) ?? null
+      })(),
+
+      // Estado civil normalizado al catálogo
+      estado_civil: (() => {
+        const raw = toNull(fd.get('estado_civil'))
+        if (raw === null) return null
+        return normalizeCivil(raw) ?? null
+      })(),
+
+      // Escolaridad (catálogo libre, pero normalizamos a MAYÚSCULAS con guiones bajos)
+      escolaridad: (() => {
+        const raw = toNull(fd.get('escolaridad'))
+        if (raw === null) return null
+        return normKey(raw)
+      })(),
+
+      // Laboral (labels UI; el API los ignora gracias al normalizador del cliente)
       departamento_nombre: toOpt(fd.get('departamento_nombre')),
       puesto_nombre: toOpt(fd.get('puesto_nombre')),
       turno_nombre: toOpt(fd.get('turno_nombre')),
@@ -126,7 +173,7 @@ export default function EmpleadoCreatePage() {
       tipo_jornada: toOpt(fd.get('tipo_jornada')),
 
       // Contacto
-      telefono: toOpt(fd.get('telefono')),
+      telefono: toOpt(fd.get('telefono')), // <- FIX: antes estaba "Telefono"
       celular: toOpt(fd.get('celular')),
       email: toOpt(fd.get('email')),
       contacto_emergencia_nombre: toOpt(fd.get('contacto_emergencia_nombre')),
@@ -150,11 +197,11 @@ export default function EmpleadoCreatePage() {
       notas: toOpt(fd.get('notas')),
 
       // Archivo
-      foto: fotoFile,
-    } as EmpleadoCreate
+      ...(includeFoto ? { foto: fotoFile } : {}),
+    } as EmpleadoCreate & Record<string, any>
 
-    // Requeridos mínimos en UI
-    if (!payload.num_empleado || !payload.nombres) {
+    // Requeridos mínimos
+    if (!payload.num_empleado || !payload.nombres || !payload.fecha_nacimiento) {
       formRef.current?.reportValidity()
       return
     }
@@ -204,14 +251,25 @@ export default function EmpleadoCreatePage() {
         <Stack direction="row" spacing={1}>
           <Button
             type="button"
-            variant="outlined"
-            startIcon={<NavigateBeforeIcon />}
-            onClick={handleBack}
+            variant="text"
+            startIcon={<CloseIcon />}
+            onClick={handleCancel}
             size="small"
-            disabled={activeStep === 0 || isPending}
+            disabled={isPending}
           >
-            Atrás
+            Cancelar
           </Button>
+
+            <Button
+              type="button"
+              variant="outlined"
+              startIcon={<NavigateBeforeIcon />}
+              onClick={handleBack}
+              size="small"
+              disabled={activeStep === 0 || isPending}
+            >
+              Atrás
+            </Button>
 
           {activeStep === lastStep ? (
             <Button
@@ -276,13 +334,58 @@ export default function EmpleadoCreatePage() {
             <TextField name="apellido_paterno" label="Apellido paterno" disabled={isPending} />
             <TextField name="apellido_materno" label="Apellido materno" disabled={isPending} />
 
-            <TextField name="fecha_nacimiento" label="Fecha nacimiento" type="date" InputLabelProps={{ shrink: true }} disabled={isPending} />
+            <TextField
+              name="fecha_nacimiento"
+              label="Fecha nacimiento"
+              type="date"
+              InputLabelProps={{ shrink: true }}
+              required
+              disabled={isPending}
+            />
+
             <TextField name="curp" label="CURP" disabled={isPending} />
             <TextField name="rfc" label="RFC" disabled={isPending} />
             <TextField name="nss" label="NSS" disabled={isPending} />
-            <TextField name="genero" label="Género" disabled={isPending} />
-            <TextField name="estado_civil" label="Estado civil" disabled={isPending} />
-            <TextField name="escolaridad" label="Escolaridad" disabled={isPending} />
+
+            {/* Género (select) */}
+            <TextField
+              name="genero"
+              label="Género"
+              select
+              disabled={isPending}
+              defaultValue=""
+            >
+              <MenuItem value="">(Sin dato)</MenuItem>
+              {GENEROS.map(opt => (
+                <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+              ))}
+            </TextField>
+
+            {/* Estado civil (select) */}
+            <TextField
+              name="estado_civil"
+              label="Estado civil"
+              select
+              disabled={isPending}
+              defaultValue=""
+            >
+              <MenuItem value="">(Sin dato)</MenuItem>
+              {ESTADOS_CIVILES.map(opt => (
+                <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+              ))}
+            </TextField>
+
+            {/* Escolaridad (select) */}
+            <TextField name="escolaridad" label="Escolaridad" select disabled={isPending} defaultValue="">
+              <MenuItem value="">(Sin dato)</MenuItem>
+              <MenuItem value="PRIMARIA">Primaria</MenuItem>
+              <MenuItem value="SECUNDARIA">Secundaria</MenuItem>
+              <MenuItem value="BACHILLERATO">Bachillerato/Preparatoria</MenuItem>
+              <MenuItem value="TSU">TSU / Técnico</MenuItem>
+              <MenuItem value="LICENCIATURA">Licenciatura/Ingeniería</MenuItem>
+              <MenuItem value="MAESTRIA">Maestría</MenuItem>
+              <MenuItem value="DOCTORADO">Doctorado</MenuItem>
+            </TextField>
           </Grid2>
 
           <Divider sx={{ my: 2 }} />
@@ -320,7 +423,7 @@ export default function EmpleadoCreatePage() {
         {/* PASO 3: Contacto y dirección */}
         <StepPanel active={activeStep === 2} index={2}>
           <Grid2>
-            <TextField name="telefono" label="Teléfono" disabled={isPending} />
+            <TextField name="telefono" label="Teléfono" disabled={isPending} /> {/* <- FIX */}
             <TextField name="celular" label="Celular" disabled={isPending} />
             <TextField name="email" label="Email" type="email" disabled={isPending} />
 
@@ -369,14 +472,6 @@ export default function EmpleadoCreatePage() {
           </Box>
         </StepPanel>
       </Box>
-
-      {/* Snackbar éxito */}
-      <Snackbar
-        open={successOpen}
-        autoHideDuration={1800}
-        onClose={() => setSuccessOpen(false)}
-        message="Empleado creado"
-      />
     </Paper>
   )
 }

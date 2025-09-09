@@ -1,3 +1,4 @@
+// src/features/empleados/EmpleadoDetailPage.tsx
 import * as React from 'react'
 import { useParams, Link as RouterLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -36,10 +37,44 @@ import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import CreditCardIcon from '@mui/icons-material/CreditCard'
 import WcIcon from '@mui/icons-material/Wc'
 import FavoriteIcon from '@mui/icons-material/Favorite'
+import SchoolIcon from '@mui/icons-material/School'
 
 import { exportEmpleadoPDF } from './pdf'
 import type { Empleado } from './types'
 import { fetchEmpleadoById } from './api'
+
+/* ---------- Mapeo de etiquetas ---------- */
+const CIVIL_LABELS: Record<string, string> = {
+  SOLTERO: 'Soltero(a)',
+  CASADO: 'Casado(a)',
+  UNION_LIBRE: 'Unión libre',
+  DIVORCIADO: 'Divorciado(a)',
+  VIUDO: 'Viudo(a)',
+  SEPARADO: 'Separado(a)',
+}
+const ESC_LABELS: Record<string, string> = {
+  PRIMARIA: 'Primaria',
+  SECUNDARIA: 'Secundaria',
+  BACHILLERATO: 'Bachillerato/Preparatoria',
+  TSU: 'TSU / Técnico',
+  LICENCIATURA: 'Licenciatura/Ingeniería',
+  MAESTRIA: 'Maestría',
+  DOCTORADO: 'Doctorado',
+}
+const normKey = (s?: string) =>
+  (s ?? '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .toUpperCase()
+
+function choiceLabel(value?: string | null, display?: string | null, map?: Record<string, string>) {
+  if (display) return display
+  if (!value) return '—'
+  const k = normKey(value)
+  return (map && map[k]) || value
+}
 
 export default function EmpleadoDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -112,7 +147,7 @@ export default function EmpleadoDetailPage() {
                 <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
                   <Avatar
                     sx={{ width: 72, height: 72, fontSize: 28 }}
-                    src={(data as any).foto || undefined}
+                    src={(data as any).foto_url || (data as any).foto || undefined}
                   >
                     {`${data.nombres?.[0] ?? ''}${data.apellido_paterno?.[0] ?? ''}`.toUpperCase()}
                   </Avatar>
@@ -200,7 +235,16 @@ export default function EmpleadoDetailPage() {
 
                 <Section title="Datos personales">
                   <InfoRow icon={<WcIcon />} label="Género" value={(data as any).genero_display ?? (data as any).genero} />
-                  <InfoRow icon={<FavoriteIcon />} label="Estado civil" value={(data as any).estado_civil_display ?? (data as any).estado_civil} />
+                  <InfoRow
+                    icon={<FavoriteIcon />}
+                    label="Estado civil"
+                    value={choiceLabel((data as any).estado_civil, (data as any).estado_civil_display, CIVIL_LABELS)}
+                  />
+                  <InfoRow
+                    icon={<SchoolIcon />}
+                    label="Escolaridad"
+                    value={choiceLabel((data as any).escolaridad, (data as any).escolaridad_display, ESC_LABELS)}
+                  />
                 </Section>
 
                 <Section title="Dirección">
@@ -221,7 +265,6 @@ export default function EmpleadoDetailPage() {
 }
 
 /* ---------- UI helpers ---------- */
-
 function Section({ title, children }: React.PropsWithChildren<{ title: string }>) {
   return (
     <Card variant="outlined">
@@ -280,7 +323,6 @@ function LoadingSkeleton() {
 }
 
 /* ---------- formatters ---------- */
-
 function mask(v?: string) {
   if (!v) return '—'
   const s = String(v)

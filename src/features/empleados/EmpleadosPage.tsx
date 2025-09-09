@@ -1,3 +1,4 @@
+// src/features/empleados/EmpleadosPage.tsx
 import * as React from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import {
@@ -18,19 +19,25 @@ import {
   MenuItem,
   Button,
   IconButton,
+  Tooltip,
+  Snackbar,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 import TableViewIcon from '@mui/icons-material/TableView'
 import VisibilityIcon from '@mui/icons-material/Visibility'
-import AddIcon from '@mui/icons-material/Add'          // ⬅️ NUEVO
+import EditIcon from '@mui/icons-material/Edit'
+import DeleteIcon from '@mui/icons-material/Delete'
+import AddIcon from '@mui/icons-material/Add'
 import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import type { AxiosError } from 'axios'
 
 import { fetchEmpleados } from './api'
 import type { Empleado } from './types'
 import api from '@/api/client'
+import ConfirmDeleteDialog from './ConfirmDeleteDialog'
+import { useDeleteEmpleado } from './useDeleteEmpleado'
 
 type EmpleadosList = {
   items: Empleado[]
@@ -46,7 +53,7 @@ const EMPLEADOS_PATH = (import.meta.env.VITE_EMPLEADOS as string) || '/v1/emplea
 const DEPARTAMENTOS_PATH = (import.meta.env.VITE_DEPARTAMENTOS as string) || '/v1/departamentos/'
 const PUESTOS_PATH = (import.meta.env.VITE_PUESTOS as string) || '/v1/puestos/'
 
-// Mapa de columnas → campo de ordenamiento en API (sin Puesto/Email)
+// Mapa de columnas → campo de ordenamiento en API
 const EMPLEADOS_ORDER_MAP: Record<string, string> = {
   num_empleado: 'num_empleado',
   nombres: 'nombres',
@@ -57,6 +64,40 @@ const EMPLEADOS_ORDER_MAP: Record<string, string> = {
   activo: 'activo',
 }
 
+// --- Etiquetas amigables + helpers (para exportaciones) ---
+const CIVIL_LABELS: Record<string, string> = {
+  SOLTERO: 'Soltero(a)',
+  CASADO: 'Casado(a)',
+  UNION_LIBRE: 'Unión libre',
+  DIVORCIADO: 'Divorciado(a)',
+  VIUDO: 'Viudo(a)',
+  SEPARADO: 'Separado(a)',
+}
+const ESC_LABELS: Record<string, string> = {
+  PRIMARIA: 'Primaria',
+  SECUNDARIA: 'Secundaria',
+  BACHILLERATO: 'Bachillerato/Preparatoria',
+  TSU: 'TSU / Técnico',
+  LICENCIATURA: 'Licenciatura/Ingeniería',
+  MAESTRIA: 'Maestría',
+  DOCTORADO: 'Doctorado',
+}
+const normKey = (s?: string) =>
+  (s ?? '')
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .trim().replace(/\s+/g, '_').toUpperCase()
+
+function choiceLabel(
+  value?: string | null,
+  display?: string | null,
+  map?: Record<string, string>
+) {
+  if (display) return display
+  if (!value) return ''
+  const k = normKey(value)
+  return (map && map[k]) || value
+}
+
 // ---- Helpers ----
 async function fetchCatalogo(path: string): Promise<CatalogoItem[]> {
   const { data } = await api.get(path, { params: { page_size: 1000 } })
@@ -64,23 +105,33 @@ async function fetchCatalogo(path: string): Promise<CatalogoItem[]> {
   return (data?.results as CatalogoItem[]) ?? []
 }
 
-// CSV sin Puesto/Email
+// CSV (incluye Estado civil / Escolaridad aunque no estén en la tabla)
 function toCSV(rows: Empleado[]): string {
-  const headers = ['Núm.', 'Nombre(s)', 'A. Paterno', 'A. Materno', 'Departamento', 'Celular', 'Estatus']
-  const lines = rows.map((r) => [
-    r.num_empleado,
-    r.nombres,
-    r.apellido_paterno,
-    r.apellido_materno,
-    r.departamento_nombre,
-    r.celular,
-    r.activo ? 'Activo' : 'Inactivo',
-  ])
-  const esc = (v: unknown) => {
+  const headers = [
+    'Núm.', 'Nombre(s)', 'A. Paterno', 'A. Materno',
+    'Departamento', 'Celular', 'Estatus',
+    'Estado civil', 'Escolaridad',
+  ]
+  const lines = rows.map((r) => {
+    const civil = choiceLabel(r.estado_civil, (r as any).estado_civil_display, CIVIL_LABELS)
+    const esc   = choiceLabel((r as any).escolaridad, (r as any).escolaridad_display, ESC_LABELS)
+    return [
+      r.num_empleado,
+      r.nombres,
+      r.apellido_paterno,
+      r.apellido_materno,
+      r.departamento_nombre,
+      r.celular,
+      r.activo ? 'Activo' : 'Inactivo',
+      civil,
+      esc,
+    ]
+  })
+  const escCsv = (v: unknown) => {
     const s = v == null ? '' : String(v)
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
-  return [headers, ...lines].map((row) => row.map(esc).join(',')).join('\n')
+  return [headers, ...lines].map((row) => row.map(escCsv).join(',')).join('\n')
 }
 
 export default function EmpleadosPage() {
@@ -151,7 +202,34 @@ export default function EmpleadosPage() {
   const rows = data?.items ?? []
   const rowCount = data?.total ?? 0
 
-  // Columnas
+  // ---- Delete: estado + hook + handlers ----
+  const del = useDeleteEmpleado()
+  const [deleteTarget, setDeleteTarget] = React.useState<{ id: number | string; nombre?: string } | null>(null)
+  const [snack, setSnack] = React.useState<{ open: boolean; msg: string; type: 'success' | 'error' }>({
+    open: false,
+    msg: '',
+    type: 'success',
+  })
+
+  const handleAskDelete = (row: Empleado) => {
+    const id = (row as any).id ?? (row as any).num_empleado
+    const nombre = [row?.nombres, row?.apellido_paterno].filter(Boolean).join(' ')
+    setDeleteTarget({ id, nombre })
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    try {
+      await del.mutateAsync(deleteTarget.id)
+      setSnack({ open: true, msg: 'Empleado eliminado', type: 'success' })
+    } catch {
+      setSnack({ open: true, msg: 'No se pudo eliminar el empleado', type: 'error' })
+    } finally {
+      setDeleteTarget(null)
+    }
+  }
+
+  // Columnas (SIN Estado civil / Escolaridad en la tabla)
   const columns = React.useMemo<GridColDef<Empleado>[]>(
     () => [
       { field: 'num_empleado', headerName: 'Núm.', width: 110, sortable: true, headerClassName: 'dg-bold' },
@@ -174,24 +252,42 @@ export default function EmpleadosPage() {
       {
         field: 'acciones',
         headerName: 'Acciones',
-        width: 130,
+        width: 160,
         sortable: false,
         filterable: false,
         disableColumnMenu: true,
         align: 'center',
         headerAlign: 'center',
-        renderCell: (params: any) => (
-          <Button
-            size="small"
-            startIcon={<VisibilityIcon />}
-            component={RouterLink}
-            to={`/empleados/${params.row.id}`}
-          >
-            Ver
-          </Button>
-        ),
+        renderCell: (params) => {
+          const id = (params.row as any).id ?? (params.row as any).num_empleado
+          return (
+            <>
+              <Tooltip title="Ver">
+                <IconButton size="small" component={RouterLink} to={`/empleados/${id}`}>
+                  <VisibilityIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Editar">
+                <IconButton size="small" component={RouterLink} to={`/empleados/${id}/editar`}>
+                  <EditIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Eliminar">
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={() => handleAskDelete(params.row as Empleado)}
+                  aria-label="Eliminar"
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </>
+          )
+        },
       },
     ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   )
 
@@ -282,16 +378,28 @@ export default function EmpleadosPage() {
       const fecha = new Date().toLocaleString()
       doc.setFontSize(14); doc.text('Empleados', 14, 14)
       doc.setFontSize(10); doc.text(`Generado: ${fecha}`, 14, 20)
-      const head = [['Núm.', 'Nombre(s)', 'A. Paterno', 'A. Materno', 'Departamento', 'Celular', 'Estatus']]
-      const body = all.map((r) => [
-        r.num_empleado,
-        r.nombres,
-        r.apellido_paterno,
-        r.apellido_materno,
-        r.departamento_nombre,
-        r.celular,
-        r.activo ? 'Activo' : 'Inactivo',
-      ])
+
+      const head = [[
+        'Núm.', 'Nombre(s)', 'A. Paterno', 'A. Materno',
+        'Departamento', 'Celular', 'Estatus',
+        'Estado civil', 'Escolaridad',
+      ]]
+      const body = all.map((r) => {
+        const civil = choiceLabel(r.estado_civil, (r as any).estado_civil_display, CIVIL_LABELS)
+        const esc   = choiceLabel((r as any).escolaridad, (r as any).escolaridad_display, ESC_LABELS)
+        return [
+          r.num_empleado,
+          r.nombres,
+          r.apellido_paterno,
+          r.apellido_materno,
+          r.departamento_nombre,
+          r.celular,
+          r.activo ? 'Activo' : 'Inactivo',
+          civil,
+          esc,
+        ]
+      })
+
       autoTable(doc, {
         head, body, startY: 26, styles: { fontSize: 8 }, headStyles: { fillColor: [33, 150, 243] },
         didDrawPage: (d: any) => {
@@ -392,7 +500,6 @@ export default function EmpleadosPage() {
 
           {/* Acciones (sm+) */}
           <Box sx={{ display: { xs: 'none', sm: 'flex' }, gap: 1, ml: 'auto', flexShrink: 0 }}>
-            {/* ⬇️ NUEVO EMPLEADO */}
             <Button
               variant="contained"
               startIcon={<AddIcon />}
@@ -416,7 +523,6 @@ export default function EmpleadosPage() {
 
           {/* Acciones (xs) */}
           <Box sx={{ display: { xs: 'flex', sm: 'none' }, gap: 0.5, ml: 'auto', flexShrink: 0 }}>
-            {/* ⬇️ NUEVO EMPLEADO (icon) */}
             <IconButton
               color="primary"
               component={RouterLink}
@@ -451,7 +557,7 @@ export default function EmpleadosPage() {
           rows={rows}
           columns={columns}
           loading={isLoading}
-          getRowId={(row) => row.id}
+          getRowId={(row) => (row as any).id ?? (row as any).num_empleado}
           disableRowSelectionOnClick
           localeText={{ noRowsLabel: 'Sin registros' }}
           paginationMode="server"
@@ -464,12 +570,31 @@ export default function EmpleadosPage() {
           onSortModelChange={setSortModel}
           density="standard"
           disableColumnMenu
-          onRowDoubleClick={(p) => navigate(`/empleados/${p.row.id}`)}
+          onRowDoubleClick={(p) => navigate(`/empleados/${(p.row as any).id ?? (p.row as any).num_empleado}`)}
           sx={{
             '& .dg-bold .MuiDataGrid-columnHeaderTitle': { fontWeight: 700 },
           }}
         />
       </Box>
+
+      {/* Diálogo de confirmación de borrado */}
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        loading={del.isPending}
+        title="Eliminar empleado"
+        description={`¿Eliminar a ${deleteTarget?.nombre ?? 'este empleado'}? Esta acción no se puede deshacer.`}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+      />
+
+      {/* Snackbar */}
+      <Snackbar
+        open={snack.open}
+        autoHideDuration={2000}
+        onClose={() => setSnack(s => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        message={snack.msg}
+      />
     </Paper>
   )
 }
