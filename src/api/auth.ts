@@ -13,9 +13,24 @@ type LoginResponse =
   | { access_token: string; refresh_token: string }
   | Record<string, unknown>
 
+// Base de API: en dev usamos proxy de Vite => "/api"
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api'
+
+/** Une base y path sin usar new URL para bases relativas como "/api" */
+function joinPath(base: string, path: string) {
+  const b = base.endsWith('/') ? base.slice(0, -1) : base
+  const p = path.startsWith('/') ? path : `/${path}`
+  return `${b}${p}` // ej: "/api" + "/token/" => "/api/token/"
+}
+
 export async function login(username: string, password: string) {
-  const loginUrl = import.meta.env.VITE_JWT_LOGIN as string
-  const { data } = await api.post<LoginResponse>(loginUrl, { username, password })
+  const loginPath = import.meta.env.VITE_JWT_LOGIN as string // p.ej. "/token/"
+  const loginUrl = joinPath(API_BASE, loginPath)
+
+  // Si tu backend usa "email" en lugar de "username", cambia la clave aquí:
+  const payload = { username, password }
+
+  const { data } = await api.post<LoginResponse>(loginUrl, payload)
 
   const access = (data as any).access ?? (data as any).access_token
   const refresh = (data as any).refresh ?? (data as any).refresh_token
@@ -30,6 +45,8 @@ export async function login(username: string, password: string) {
 
 export function logout() {
   clearTokens()
+  // opcional: redirigir al login
+  // window.location.replace('/login')
 }
 
 export function getAccessToken(): string | null {
@@ -57,7 +74,7 @@ export function parseUser(accessToken?: string) {
     const payload = jwtDecode<JwtPayload>(token)
     const roles = (payload.roles || []) as (Role | string)[]
     return {
-      username: payload.username || payload.email || payload.sub || 'user',
+      username: (payload as any).username || (payload as any).email || payload.sub || 'user',
       roles: roles.map(String) as Role[],
       tokenExp: payload.exp,
     }

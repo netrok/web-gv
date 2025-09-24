@@ -4,12 +4,16 @@ import path from 'node:path'
 
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') },
+  resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
+  server: {
+    host: true,
+    port: 5173,
+    strictPort: true,
+    cors: true,
+    hmr: { clientPort: 5173 }, // no fijes 'host'
   },
-  server: { port: 5173, host: true, strictPort: true },
   build: {
-    chunkSizeWarningLimit: 1200, // opcional: sube el umbral del warning
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
         manualChunks: {
